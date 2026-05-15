@@ -11,12 +11,9 @@
     <!-- Tailwind CSS with Dark Mode Enabled -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        tailwind.config = {
-            darkMode: 'class',
-        }
+        tailwind.config = { darkMode: 'class' }
     </script>
     
-    <link href="https://cdn.jsdelivr.net/npm/lucide-static@0.344.0/font/lucide.min.css" rel="stylesheet">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
         body { font-family: 'Inter', sans-serif; overflow: hidden; font-style: normal !important; }
@@ -24,13 +21,10 @@
         .card-inner { transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); transform-style: preserve-3d; }
         .flipped { transform: rotateY(180deg); }
         .backface-hidden { backface-visibility: hidden; }
-        
-        /* Resizer styles for Light/Dark mode */
         .resizer { width: 12px; cursor: col-resize; z-index: 40; transition: background 0.2s; }
         .resizer { background: #f1f5f9; }
         .dark .resizer { background: #1e293b; }
         .resizer:hover, .resizer.dragging { background: #6366f1 !important; }
-        
         .rotate-y-180 { transform: rotateY(180deg); }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 10px; }
@@ -78,11 +72,13 @@
             const [debugLogs, setDebugLogs] = useState([]);
             
             const [fileContent, setFileContent] = useState({ url: '', title: '', vocab: [] });
+            const [stagedDeck, setStagedDeck] = useState([]); // Controls what words go into the quiz menu
             const [sessionCards, setSessionCards] = useState([]);
             const [mistakeTracker, setMistakeTracker] = useState([]);
             const [quizType, setQuizType] = useState(null);
             const [isFlipped, setIsFlipped] = useState(false);
             const [mcqSelected, setMcqSelected] = useState(null);
+            const [mcqStatus, setMcqStatus] = useState(null); // Tracks if current MCQ answer was right/wrong
             const [isFinished, setIsFinished] = useState(false);
             const [isDragging, setIsDragging] = useState(false);
             const [showNextButton, setShowNextButton] = useState(false);
@@ -90,7 +86,6 @@
             const [selectedWordIds, setSelectedWordIds] = useState([]);
             const [isSelectionMode, setIsSelectionMode] = useState(false);
 
-            // Toggle Dark Mode Class on Document
             useEffect(() => {
                 if (isDarkMode) document.documentElement.classList.add('dark');
                 else document.documentElement.classList.remove('dark');
@@ -133,16 +128,13 @@
                     const details = await Promise.all(txtFiles.map(async (f) => {
                         const name = f.name;
                         const year = name.substring(0, 4);
-                        const monthPart = name.substring(4, 6);
-                        const dayPart = name.substring(6, 8);
-                        const mIdx = parseInt(monthPart) - 1;
-                        const day = parseInt(dayPart);
+                        const mIdx = parseInt(name.substring(4, 6)) - 1;
+                        const day = parseInt(name.substring(6, 8));
                         
                         let title = name;
                         try {
                             const contentRes = await fetch(f.download_url);
-                            const text = await contentRes.text();
-                            title = parseFileText(text).title;
+                            title = parseFileText(await contentRes.text()).title;
                         } catch (e) {}
 
                         return { fileName: name, year, month: mIdx, dayLabel: getOrdinal(day), displayTitle: title, fullPath: f.download_url };
@@ -159,6 +151,7 @@
                     const parsed = parseFileText(await res.text());
                     setFileContent(parsed);
                     setActiveFile(f.fileName);
+                    setStagedDeck(parsed.vocab); // Default to full deck
                     setQuizType(null);
                     setIsFinished(false);
                     setSelectedWordIds([]);
@@ -166,45 +159,53 @@
                 } catch (e) { addLog("Load error."); }
             };
 
-            const activeDeck = useMemo(() => {
-                if (isSelectionMode && selectedWordIds.length > 0) {
-                    return fileContent.vocab.filter(v => selectedWordIds.includes(v.id));
-                }
-                return fileContent.vocab;
-            }, [fileContent.vocab, selectedWordIds, isSelectionMode]);
+            // Triggers from the Vocab Table to force a specific quiz
+            const handleStartSpecificStudy = () => {
+                setStagedDeck(fileContent.vocab.filter(v => selectedWordIds.includes(v.id)));
+                setQuizType(null); // Show the menu
+                if (viewMode === 'list') setViewMode('split'); // Ensure quiz side is visible
+            };
 
-            const startQuiz = (type, cards = activeDeck) => {
+            const startQuiz = (type, cards = stagedDeck) => {
                 if (cards.length === 0) return; 
                 setSessionCards([...cards].sort(() => Math.random() - 0.5));
                 setQuizType(type);
                 setIsFinished(false);
                 setIsFlipped(false);
                 setMcqSelected(null);
+                setMcqStatus(null);
                 setMistakeTracker([]);
                 setShowNextButton(false);
             };
 
-            const handleCorrect = () => {
+            const executeCorrect = () => {
                 const next = sessionCards.slice(1);
                 if (next.length === 0) setIsFinished(true);
-                else { setSessionCards(next); setIsFlipped(false); setMcqSelected(null); setShowNextButton(false); }
+                else { setSessionCards(next); setIsFlipped(false); setMcqSelected(null); setMcqStatus(null); setShowNextButton(false); }
             };
 
-            const handleIncorrect = () => {
+            const executeIncorrect = () => {
                 const current = sessionCards[0];
                 if (!mistakeTracker.find(c => c.id === current.id)) setMistakeTracker(prev => [...prev, current]);
-                if (quizType === 'flash' && !isFlipped) {
+                
+                const remaining = sessionCards.slice(1);
+                const randomIndex = Math.floor(Math.random() * (remaining.length + 1));
+                const newDeck = [...remaining];
+                newDeck.splice(randomIndex, 0, current);
+                
+                setSessionCards(newDeck);
+                setIsFlipped(false);
+                setMcqSelected(null);
+                setMcqStatus(null);
+                setShowNextButton(false);
+            };
+
+            const handleFlashcardWrong = () => {
+                if (!isFlipped) {
                     setIsFlipped(true);
                     setShowNextButton(true);
                 } else {
-                    const remaining = sessionCards.slice(1);
-                    const randomIndex = Math.floor(Math.random() * (remaining.length + 1));
-                    const newDeck = [...remaining];
-                    newDeck.splice(randomIndex, 0, current);
-                    setSessionCards(newDeck);
-                    setIsFlipped(false);
-                    setMcqSelected(null);
-                    setShowNextButton(false);
+                    executeIncorrect();
                 }
             };
 
@@ -213,8 +214,7 @@
                     if (!isDragging) return;
                     const sidebarWidth = 320;
                     const workspaceWidth = window.innerWidth - sidebarWidth;
-                    let relativeX = e.clientX - sidebarWidth;
-                    let percent = (relativeX / workspaceWidth) * 100;
+                    let percent = ((e.clientX - sidebarWidth) / workspaceWidth) * 100;
                     setSplitPercent(Math.min(Math.max(percent, 10), 90));
                 };
                 const handleMouseUp = () => { setIsDragging(false); document.body.style.cursor = 'default'; };
@@ -259,13 +259,17 @@
                         <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-10 z-10 shadow-sm font-bold transition-colors duration-300">
                             <h2 className="font-black truncate text-sm tracking-tight uppercase font-bold">{fileContent.title || "Kotoba Master"}</h2>
                             <div className="flex items-center gap-4">
-                                {/* Dark Mode Toggle */}
-                                <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg transition-all" title="Toggle Theme">
-                                    {isDarkMode ? <i className="lucide-sun text-lg font-bold"></i> : <i className="lucide-moon text-lg font-bold"></i>}
+                                {/* SVG Dark Mode Toggle */}
+                                <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg transition-all">
+                                    {isDarkMode ? (
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                                    ) : (
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                                    )}
                                 </button>
                                 
                                 <button onClick={() => { setIsSwapped(!isSwapped); setSplitPercent(100 - splitPercent); }} className="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-lg transition-all flex items-center gap-2">
-                                    <i className="lucide-arrow-left-right text-lg font-bold"></i>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="M16 21l4-4-4-4"/><path d="M20 17H4"/></svg>
                                     <span className="text-[10px] font-black uppercase tracking-widest font-bold">Swap</span>
                                 </button>
                                 <div className="h-6 w-[1px] bg-slate-200 dark:bg-slate-700"></div>
@@ -285,12 +289,12 @@
                                     quizScale={quizScale} setQuizScale={setQuizScale} 
                                     activeFile={activeFile} isFinished={isFinished} 
                                     mistakeTracker={mistakeTracker} startQuiz={startQuiz} 
-                                    quizType={quizType} fullVocab={fileContent.vocab} activeDeck={activeDeck} 
+                                    quizType={quizType} fullVocab={fileContent.vocab} stagedDeck={stagedDeck} 
                                     sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} 
                                     mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} 
-                                    handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} 
+                                    mcqStatus={mcqStatus} setMcqStatus={setMcqStatus}
+                                    executeCorrect={executeCorrect} executeIncorrect={executeIncorrect} handleFlashcardWrong={handleFlashcardWrong}
                                     showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished}
-                                    isSelectionMode={isSelectionMode} 
                                 />
                             </div>
                             
@@ -301,6 +305,7 @@
                                     fileContent={fileContent} 
                                     selectedWordIds={selectedWordIds} setSelectedWordIds={setSelectedWordIds}
                                     isSelectionMode={isSelectionMode} setIsSelectionMode={setIsSelectionMode} 
+                                    handleStartSpecificStudy={handleStartSpecificStudy}
                                 />
                             </div>
                         </div>
@@ -309,7 +314,8 @@
             );
         };
 
-        const QuizPanel = ({ quizScale, setQuizScale, activeFile, isFinished, mistakeTracker, startQuiz, quizType, fullVocab, activeDeck, sessionCards, isFlipped, setIsFlipped, mcqSelected, setMcqSelected, handleCorrect, handleIncorrect, showNextButton, setQuizType, setIsFinished, isSelectionMode }) => {
+        const QuizPanel = ({ quizScale, setQuizScale, activeFile, isFinished, mistakeTracker, startQuiz, quizType, fullVocab, stagedDeck, sessionCards, isFlipped, setIsFlipped, mcqSelected, setMcqSelected, mcqStatus, setMcqStatus, executeCorrect, executeIncorrect, handleFlashcardWrong, showNextButton, setQuizType, setIsFinished }) => {
+            
             const mcqOptions = useMemo(() => {
                 if (quizType !== 'mcq' || !sessionCards[0]) return [];
                 const correct = sessionCards[0];
@@ -317,12 +323,35 @@
                 return [correct, ...others].sort(() => Math.random() - 0.5);
             }, [sessionCards, quizType, fullVocab]);
 
+            const handleMcqClick = (opt) => {
+                if (mcqSelected) return; // Prevent double clicking
+                const isCorrect = opt.id === sessionCards[0].id;
+                setMcqSelected(opt);
+                setMcqStatus(isCorrect ? 'correct' : 'incorrect');
+                if (!isCorrect && !mistakeTracker.find(c => c.id === sessionCards[0].id)) {
+                    mistakeTracker.push(sessionCards[0]); // Register mistake silently
+                }
+            };
+
+            const handleMcqNext = () => {
+                if (mcqStatus === 'correct') executeCorrect();
+                else executeIncorrect();
+            };
+
             return (
                 <div className="h-full bg-slate-50 dark:bg-[#0f172a] flex flex-col items-center justify-center p-12 relative overflow-y-auto w-full transition-colors duration-300">
+                    {/* The Exit Quiz X Button */}
+                    {quizType && !isFinished && (
+                        <button onClick={() => setQuizType(null)} className="absolute top-6 left-10 p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full shadow-sm text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors z-50">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                        </button>
+                    )}
+
                     <div className="absolute top-6 right-10 flex gap-2 z-50">
                         <button onClick={() => setQuizScale(Math.max(quizScale - 0.1, 0.5))} className="w-10 h-10 flex items-center justify-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm font-black text-xl font-bold hover:bg-slate-50 dark:hover:bg-slate-700">-</button>
                         <button onClick={() => setQuizScale(Math.min(quizScale + 0.1, 1.5))} className="w-10 h-10 flex items-center justify-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm font-black text-xl font-bold hover:bg-slate-50 dark:hover:bg-slate-700">+</button>
                     </div>
+                    
                     <div className="quiz-scale-container w-full flex flex-col items-center justify-center" style={{ transform: `scale(${quizScale})` }}>
                         {!activeFile ? (
                             <div className="text-slate-300 dark:text-slate-600 font-black uppercase tracking-[0.3em] text-[10px] font-bold">Waiting for input</div>
@@ -332,35 +361,35 @@
                                 <h2 className="text-6xl font-black mb-4 uppercase tracking-tighter leading-none font-bold">DONE</h2>
                                 <div className="space-y-6">
                                     {mistakeTracker.length > 0 && <button onClick={() => startQuiz(quizType, mistakeTracker)} className="w-full py-10 bg-indigo-600 dark:bg-indigo-500 text-white rounded-3xl font-black shadow-xl uppercase text-lg tracking-widest font-bold">Retry Mistakes ({mistakeTracker.length})</button>}
-                                    <button onClick={() => startQuiz(quizType, activeDeck)} className="w-full py-10 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-3xl font-black uppercase text-lg tracking-widest font-bold transition-colors">Full Restart</button>
+                                    <button onClick={() => startQuiz(quizType, stagedDeck)} className="w-full py-10 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-3xl font-black uppercase text-lg tracking-widest font-bold transition-colors">Full Restart</button>
                                     <button onClick={() => { setQuizType(null); setIsFinished(false); }} className="w-full py-6 text-indigo-600 dark:text-indigo-400 font-black text-sm uppercase tracking-widest border-t border-slate-100 dark:border-slate-800 mt-6 font-bold">Menu</button>
                                 </div>
                             </div>
                         ) : !quizType ? (
                             <div className="max-w-2xl w-full space-y-10 text-center font-bold relative">
-                                {isSelectionMode && activeDeck.length !== fullVocab.length && (
+                                {stagedDeck.length !== fullVocab.length ? (
                                     <div className="text-indigo-500 font-black uppercase tracking-widest text-sm mb-4">Specific Study Active</div>
-                                )}
+                                ) : null}
                                 <h3 className="text-7xl font-black mb-12 tracking-tighter leading-none font-bold">
-                                    {activeDeck.length} {activeDeck.length === 1 ? 'Word' : 'Words'}
+                                    {stagedDeck.length} {stagedDeck.length === 1 ? 'Word' : 'Words'}
                                 </h3>
                                 
-                                <button disabled={activeDeck.length === 0} onClick={() => startQuiz('flash')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${activeDeck.length === 0 ? 'bg-slate-100 dark:bg-slate-800/50 opacity-40 border-slate-200 dark:border-slate-700' : 'bg-white dark:bg-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500 border-slate-100 dark:border-slate-700'}`}>
-                                    <div className={`font-black text-5xl mb-2 uppercase font-bold transition-colors ${activeDeck.length === 0 ? 'text-slate-400 dark:text-slate-500' : 'group-hover:text-indigo-600 dark:group-hover:text-indigo-400'}`}>Flashcards</div>
+                                <button disabled={stagedDeck.length === 0} onClick={() => startQuiz('flash')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${stagedDeck.length === 0 ? 'bg-slate-100 dark:bg-slate-800/50 opacity-40 border-slate-200 dark:border-slate-700' : 'bg-white dark:bg-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500 border-slate-100 dark:border-slate-700'}`}>
+                                    <div className={`font-black text-5xl mb-2 uppercase font-bold transition-colors ${stagedDeck.length === 0 ? 'text-slate-400 dark:text-slate-500' : 'group-hover:text-indigo-600 dark:group-hover:text-indigo-400'}`}>Flashcards</div>
                                     <div className="text-slate-400 dark:text-slate-500 text-sm font-black uppercase tracking-widest leading-none font-bold">Manual study</div>
                                 </button>
-                                <button disabled={fullVocab.length < 4 || activeDeck.length === 0} onClick={() => startQuiz('mcq')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${fullVocab.length < 4 || activeDeck.length === 0 ? 'bg-slate-100 dark:bg-slate-800/50 opacity-40 border-slate-200 dark:border-slate-700' : 'bg-white dark:bg-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500 border-slate-100 dark:border-slate-700'}`}>
-                                    <div className={`font-black text-5xl mb-2 uppercase leading-none font-bold transition-colors ${fullVocab.length < 4 || activeDeck.length === 0 ? 'text-slate-400 dark:text-slate-500' : 'group-hover:text-indigo-600 dark:group-hover:text-indigo-400'}`}>Selection</div>
+                                <button disabled={fullVocab.length < 4 || stagedDeck.length === 0} onClick={() => startQuiz('mcq')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${fullVocab.length < 4 || stagedDeck.length === 0 ? 'bg-slate-100 dark:bg-slate-800/50 opacity-40 border-slate-200 dark:border-slate-700' : 'bg-white dark:bg-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500 border-slate-100 dark:border-slate-700'}`}>
+                                    <div className={`font-black text-5xl mb-2 uppercase leading-none font-bold transition-colors ${fullVocab.length < 4 || stagedDeck.length === 0 ? 'text-slate-400 dark:text-slate-500' : 'group-hover:text-indigo-600 dark:group-hover:text-indigo-400'}`}>Selection</div>
                                     <div className="text-slate-400 dark:text-slate-500 text-sm font-black uppercase tracking-widest leading-none font-bold">{fullVocab.length < 4 ? "Need 4+ total words" : "Test yourself"}</div>
                                 </button>
                             </div>
                         ) : (
                             <div className="w-full max-w-4xl flex flex-col items-center">
-                                <div className="aspect-[16/8] w-full perspective-2000 mb-12 cursor-pointer" onClick={() => { if (quizType === 'flash' && !showNextButton) setIsFlipped(!isFlipped); if (mcqSelected) handleCorrect(); if (showNextButton) handleIncorrect(); }}>
+                                <div className="aspect-[16/8] w-full perspective-2000 mb-12 cursor-pointer" onClick={() => { if (quizType === 'flash' && !showNextButton) setIsFlipped(!isFlipped); if (mcqSelected) handleMcqNext(); if (showNextButton) executeIncorrect(); }}>
                                     <div className={`w-full h-full card-inner relative ${isFlipped || mcqSelected ? 'flipped' : ''}`}>
                                         <div className="absolute w-full h-full bg-white dark:bg-slate-800 rounded-[4rem] shadow-2xl border border-slate-100 dark:border-slate-700 flex flex-col items-center justify-center p-20 backface-hidden font-bold transition-colors">
-                                            <h1 className="text-7xl font-black mb-12 select-text text-center leading-none font-bold" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h1>
-                                            <div className="px-12 py-5 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500 rounded-full text-sm font-black tracking-widest uppercase leading-none font-bold font-bold">FLIP</div>
+                                            <h1 className="text-7xl font-black text-slate-900 dark:text-white mb-12 select-text text-center leading-none font-bold" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h1>
+                                            {quizType === 'flash' && <div className="px-12 py-5 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500 rounded-full text-sm font-black tracking-widest uppercase leading-none font-bold font-bold">FLIP</div>}
                                         </div>
                                         <div className="absolute w-full h-full bg-indigo-600 dark:bg-indigo-700 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white font-bold font-bold transition-colors">
                                             <h3 className="text-5xl font-black mb-6 select-text leading-none font-bold">{sessionCards[0].word}</h3>
@@ -374,15 +403,15 @@
                                 <div className="w-full">
                                     {quizType === 'flash' ? (
                                         showNextButton ? (
-                                            <button onClick={handleIncorrect} className="w-full py-10 bg-indigo-600 dark:bg-indigo-500 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95 font-bold font-bold">Next</button>
+                                            <button onClick={executeIncorrect} className="w-full py-10 bg-indigo-600 dark:bg-indigo-500 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95 font-bold font-bold">Next Card</button>
                                         ) : (
                                             <div className="grid grid-cols-2 gap-10 font-bold">
-                                                <button onClick={handleIncorrect} className="py-10 bg-white dark:bg-slate-800 border-2 border-red-50 dark:border-red-500/20 text-red-500 dark:text-red-400 font-black text-xl hover:bg-red-50 dark:hover:bg-red-500/10 shadow-xl transition-all uppercase tracking-widest leading-none font-bold font-bold">Wrong</button>
-                                                <button onClick={handleCorrect} className="py-10 bg-white dark:bg-slate-800 border-2 border-green-50 dark:border-green-500/20 text-green-500 dark:text-green-400 font-black text-xl hover:bg-green-50 dark:hover:bg-green-500/10 shadow-xl transition-all uppercase tracking-widest leading-none font-bold font-bold">Right</button>
+                                                <button onClick={handleFlashcardWrong} className="py-10 bg-white dark:bg-slate-800 border-2 border-red-50 dark:border-red-500/20 text-red-500 dark:text-red-400 font-black text-xl hover:bg-red-50 dark:hover:bg-red-500/10 shadow-xl transition-all uppercase tracking-widest leading-none font-bold font-bold">Wrong</button>
+                                                <button onClick={executeCorrect} className="py-10 bg-white dark:bg-slate-800 border-2 border-green-50 dark:border-green-500/20 text-green-500 dark:text-green-400 font-black text-xl hover:bg-green-50 dark:hover:bg-green-500/10 shadow-xl transition-all uppercase tracking-widest leading-none font-bold font-bold">Right</button>
                                             </div>
                                         )
                                     ) : (
-                                        <div className="grid grid-cols-1 gap-6 w-full font-bold">
+                                        <div className="flex flex-col gap-6 w-full font-bold">
                                             {mcqOptions.map(opt => {
                                                 const isCorrect = opt.id === sessionCards[0].id, isSelected = mcqSelected?.id === opt.id;
                                                 let style = "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-indigo-400 dark:hover:border-indigo-500 font-bold";
@@ -392,11 +421,16 @@
                                                     else style = "bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-300 dark:text-slate-600 opacity-40 font-bold";
                                                 }
                                                 return (
-                                                    <button key={opt.id} disabled={!!mcqSelected} onClick={() => { if (isCorrect) handleCorrect(); else { handleIncorrect(); setMcqSelected(opt); } }} className={`py-8 px-12 rounded-[2.5rem] border-4 text-2xl font-black transition-all text-left tracking-tight leading-tight font-bold ${style}`}>
+                                                    <button key={opt.id} disabled={!!mcqSelected} onClick={() => handleMcqClick(opt)} className={`py-8 px-12 rounded-[2.5rem] border-4 text-2xl font-black transition-all text-left tracking-tight leading-tight font-bold ${style}`}>
                                                         {formatMeaningText(opt.meaning.split('\n')[0].substring(0, 140))}
                                                     </button>
                                                 );
                                             })}
+                                            {mcqSelected && (
+                                                <button onClick={handleMcqNext} className="w-full mt-4 py-8 bg-indigo-600 dark:bg-indigo-500 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95 font-bold">
+                                                    Next Card
+                                                </button>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -407,13 +441,11 @@
             );
         };
 
-        const VocabTablePanel = ({ fileContent, selectedWordIds, setSelectedWordIds, isSelectionMode, setIsSelectionMode }) => {
-            // State for column resizing
+        const VocabTablePanel = ({ fileContent, selectedWordIds, setSelectedWordIds, isSelectionMode, setIsSelectionMode, handleStartSpecificStudy }) => {
             const [colWidths, setColWidths] = useState({ vocab: 200, reading: 200 });
             const [resizingCol, setResizingCol] = useState(null);
             const resizingRef = useRef(null);
 
-            // Table Resizing Mouse Listeners
             useEffect(() => {
                 const handleMouseMove = (e) => {
                     if (!resizingCol || !resizingRef.current) return;
@@ -451,15 +483,12 @@
                 setIsSelectionMode(!isSelectionMode);
             };
 
-            const getHostname = (link) => {
-                try { return new URL(link).hostname; } catch(e) { return "External Resource"; }
-            };
+            const getHostname = (link) => { try { return new URL(link).hostname; } catch(e) { return "External Resource"; } };
 
             return (
                 <div className="h-full bg-white dark:bg-[#0f172a] flex flex-col w-full relative transition-colors duration-300">
                     {fileContent.vocab.length > 0 ? (
                         <>
-                            {/* Embedded Link Header Bar */}
                             {fileContent.url && (
                                 <div className="h-14 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 shrink-0 z-10 shadow-sm transition-colors duration-300">
                                     <div className="flex items-center gap-3 overflow-hidden">
@@ -474,58 +503,46 @@
                                 </div>
                             )}
 
-                            {/* Table Control Header */}
                             <div className="h-16 bg-white dark:bg-[#0f172a] border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 shrink-0 z-10 shadow-sm transition-colors duration-300">
                                 <div className="text-[11px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400 font-bold">Vocabulary List</div>
                                 <div className="flex items-center gap-4">
+                                    {isSelectionMode && selectedWordIds.length > 0 && (
+                                        <button onClick={handleStartSpecificStudy} className="px-5 py-2.5 bg-green-500 dark:bg-green-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 dark:hover:bg-green-500 transition-all shadow-md active:scale-95 font-bold">
+                                            Start Specific Study ({selectedWordIds.length})
+                                        </button>
+                                    )}
                                     {isSelectionMode && (
                                         <button onClick={() => setSelectedWordIds(fileContent.vocab.map(v => v.id))} className="text-[10px] font-black uppercase tracking-widest text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-bold transition-colors">
                                             Select All
                                         </button>
                                     )}
-                                    <button 
-                                        onClick={handleToggleMode} 
-                                        className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm active:scale-95 flex items-center gap-2 font-bold ${isSelectionMode ? 'bg-indigo-600 dark:bg-indigo-500 text-white' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
-                                    >
+                                    <button onClick={handleToggleMode} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm active:scale-95 flex items-center gap-2 font-bold ${isSelectionMode ? 'bg-indigo-600 dark:bg-indigo-500 text-white' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>
                                         {isSelectionMode ? "Clear & Exit Specific Study" : "Specific Study"}
                                     </button>
                                 </div>
                             </div>
                             
-                            {/* Scrollable, Resizable Table */}
                             <div className="flex-1 overflow-y-auto custom-scrollbar relative">
                                 <table className="w-full text-left border-collapse table-fixed">
                                     <thead className="sticky top-0 bg-white/95 dark:bg-[#0f172a]/95 backdrop-blur z-30 shadow-sm transition-colors duration-300">
                                         <tr>
                                             {isSelectionMode && <th className="w-16 p-4 border-b-2 border-slate-100 dark:border-slate-800"></th>}
-                                            
-                                            {/* Vocab Header with Drag Handle */}
                                             <th style={{ width: colWidths.vocab }} className="p-4 border-b-2 border-slate-100 dark:border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 relative group transition-colors duration-300">
                                                 Vocab
                                                 <div onMouseDown={(e) => startResizing('vocab', e)} className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-indigo-500 bg-transparent transition-colors z-20"></div>
                                             </th>
-
-                                            {/* Reading Header with Drag Handle */}
                                             <th style={{ width: colWidths.reading }} className="p-4 border-b-2 border-slate-100 dark:border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 relative group transition-colors duration-300">
                                                 Reading
                                                 <div onMouseDown={(e) => startResizing('reading', e)} className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-indigo-500 bg-transparent transition-colors z-20"></div>
                                             </th>
-
-                                            {/* Meaning Column gets the remaining space naturally */}
-                                            <th className="p-4 border-b-2 border-slate-100 dark:border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 transition-colors duration-300">
-                                                Meaning
-                                            </th>
+                                            <th className="p-4 border-b-2 border-slate-100 dark:border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 transition-colors duration-300">Meaning</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {fileContent.vocab.map(v => {
                                             const isSelected = selectedWordIds.includes(v.id);
                                             return (
-                                                <tr 
-                                                    key={v.id} 
-                                                    onClick={() => isSelectionMode && toggleSelection(v.id)}
-                                                    className={`transition-colors border-b border-slate-50 dark:border-slate-800/50 ${isSelectionMode ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''} ${isSelected && isSelectionMode ? 'bg-indigo-50/60 dark:bg-indigo-500/10' : ''}`}
-                                                >
+                                                <tr key={v.id} onClick={() => isSelectionMode && toggleSelection(v.id)} className={`transition-colors border-b border-slate-50 dark:border-slate-800/50 ${isSelectionMode ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''} ${isSelected && isSelectionMode ? 'bg-indigo-50/60 dark:bg-indigo-500/10' : ''}`}>
                                                     {isSelectionMode && (
                                                         <td className="p-4 text-center">
                                                             <div className={`w-6 h-6 rounded flex items-center justify-center border-2 transition-colors mx-auto ${isSelected ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800'}`}>
@@ -533,7 +550,7 @@
                                                             </div>
                                                         </td>
                                                     )}
-                                                    <td className="p-4 font-black text-2xl">{v.word}</td>
+                                                    <td className="p-4 font-black text-2xl text-slate-900 dark:text-slate-100">{v.word}</td>
                                                     <td className="p-4 font-bold text-base text-indigo-500 dark:text-indigo-400">{v.reading}</td>
                                                     <td className="p-4 font-bold text-base text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">{formatMeaningText(v.meaning)}</td>
                                                 </tr>
