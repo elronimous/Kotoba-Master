@@ -41,6 +41,17 @@
             return n + (s[(v - 20) % 10] || s[v] || s[0]);
         };
 
+        // Extracted so both panels can use it
+        const formatMeaningText = (text) => {
+            if (!text) return null;
+            const parts = text.split(/(\([^)]+\)|\[[^\]]+\])/g);
+            return parts.map((part, i) => {
+                if (/^[\(\[]\d+[\)\]]$/.test(part)) return part; // Numbers like (1) stay normal
+                if (/^[\(\[].*[\)\]]$/.test(part)) return <span key={i} className="text-slate-400 text-[0.85em] font-medium">{part}</span>; // Other brackets grayed
+                return part;
+            });
+        };
+
         const App = () => {
             const [viewMode, setViewMode] = useState('split');
             const [splitPercent, setSplitPercent] = useState(75); 
@@ -61,6 +72,10 @@
             const [isFinished, setIsFinished] = useState(false);
             const [isDragging, setIsDragging] = useState(false);
             const [showNextButton, setShowNextButton] = useState(false);
+
+            // New Specific Study States
+            const [selectedWordIds, setSelectedWordIds] = useState([]);
+            const [isSelectionMode, setIsSelectionMode] = useState(false);
 
             const addLog = (msg) => setDebugLogs(prev => [...prev, msg].slice(-10));
 
@@ -98,10 +113,6 @@
                     const remoteFiles = await response.json();
                     const txtFiles = remoteFiles.filter(f => f.name.endsWith('.txt'));
                     
-                    if (txtFiles.length === 0) {
-                        addLog("API connected, but no .txt files found in 'data'.");
-                    }
-                    
                     const details = await Promise.all(txtFiles.map(async (f) => {
                         const name = f.name;
                         const year = name.substring(0, 4);
@@ -118,15 +129,10 @@
                             title = parseFileText(text).title;
                         } catch (e) {}
 
-                        return { 
-                            fileName: name, year, month: mIdx, 
-                            dayLabel: getOrdinal(day), displayTitle: title, 
-                            fullPath: f.download_url 
-                        };
+                        return { fileName: name, year, month: mIdx, dayLabel: getOrdinal(day), displayTitle: title, fullPath: f.download_url };
                     }));
                     
                     setFiles(details.sort((a, b) => b.fileName.localeCompare(a.fileName)));
-                    addLog(`Successfully loaded ${details.length} files.`);
                 } catch (e) {
                     addLog(`Error: ${e.message}`);
                 }
@@ -140,12 +146,25 @@
                     const parsed = parseFileText(await res.text());
                     setFileContent(parsed);
                     setActiveFile(f.fileName);
+                    
+                    // Reset everything for new file
                     setQuizType(null);
                     setIsFinished(false);
+                    setSelectedWordIds([]);
+                    setIsSelectionMode(false);
                 } catch (e) { addLog("Load error."); }
             };
 
-            const startQuiz = (type, cards = fileContent.vocab) => {
+            // Derive active deck based on Specific Study mode
+            const activeDeck = useMemo(() => {
+                if (isSelectionMode && selectedWordIds.length > 0) {
+                    return fileContent.vocab.filter(v => selectedWordIds.includes(v.id));
+                }
+                return fileContent.vocab;
+            }, [fileContent.vocab, selectedWordIds, isSelectionMode]);
+
+            const startQuiz = (type, cards = activeDeck) => {
+                if (cards.length === 0) return; // Prevent starting empty
                 setSessionCards([...cards].sort(() => Math.random() - 0.5));
                 setQuizType(type);
                 setIsFinished(false);
@@ -194,21 +213,11 @@
                     window.addEventListener('mouseup', handleMouseUp);
                     document.body.style.cursor = 'col-resize';
                 }
-                return () => {
-                    window.removeEventListener('mousemove', handleMouseMove);
-                    window.removeEventListener('mouseup', handleMouseUp);
-                };
+                return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
             }, [isDragging]);
 
             return (
                 <div className="flex h-screen w-screen overflow-hidden select-none bg-slate-100 font-bold">
-                    {files.length === 0 && (
-                        <div className="fixed bottom-6 right-6 bg-slate-900 text-indigo-300 p-6 rounded-2xl text-[10px] font-mono z-[100] shadow-2xl max-w-xs border border-indigo-500/30">
-                            <div className="text-white font-bold mb-2 border-b border-slate-800 pb-2 uppercase tracking-widest">GitHub API Logs</div>
-                            {debugLogs.length === 0 ? "Starting dynamic scan..." : debugLogs.map((log, i) => <div key={i}> {log} </div>)}
-                        </div>
-                    )}
-
                     <div className="w-80 bg-slate-900 text-slate-400 flex flex-col flex-shrink-0 z-50 shadow-2xl">
                         <div className="p-6 border-b border-slate-800 flex items-center justify-between text-white font-bold">
                             <button onClick={() => setCurrentYear(y => y-1)} className="p-2 hover:bg-slate-800 rounded-lg">{"<"}</button>
@@ -246,7 +255,7 @@
                                 </button>
                                 <div className="h-6 w-[1px] bg-slate-200"></div>
                                 <div className="flex bg-slate-100 p-1 rounded-xl">
-                                    {['quiz', 'split', 'web'].map(mode => (
+                                    {['quiz', 'split', 'list'].map(mode => (
                                         <button key={mode} onClick={() => setViewMode(mode)} className={`px-6 py-2 text-[10px] font-black rounded-lg transition-all font-bold ${viewMode === mode ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>
                                             {mode.toUpperCase()}
                                         </button>
@@ -257,11 +266,27 @@
 
                         <div className={`flex-1 flex overflow-hidden ${isSwapped ? 'flex-row-reverse' : ''}`}>
                             <div style={{ width: viewMode === 'split' ? `${splitPercent}%` : (viewMode === 'quiz' ? '100%' : '0%') }} className="h-full overflow-hidden flex flex-col">
-                                <QuizPanel quizScale={quizScale} setQuizScale={setQuizScale} activeFile={activeFile} isFinished={isFinished} mistakeTracker={mistakeTracker} startQuiz={startQuiz} quizType={quizType} fileContent={fileContent} sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished} />
+                                <QuizPanel 
+                                    quizScale={quizScale} setQuizScale={setQuizScale} 
+                                    activeFile={activeFile} isFinished={isFinished} 
+                                    mistakeTracker={mistakeTracker} startQuiz={startQuiz} 
+                                    quizType={quizType} fullVocab={fileContent.vocab} activeDeck={activeDeck} 
+                                    sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} 
+                                    mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} 
+                                    handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} 
+                                    showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished}
+                                    isSelectionMode={isSelectionMode} 
+                                />
                             </div>
+                            
                             {viewMode === 'split' && <div className={`resizer ${isDragging ? 'dragging' : ''}`} onMouseDown={() => setIsDragging(true)}></div>}
-                            <div style={{ width: viewMode === 'split' ? `${100 - splitPercent}%` : (viewMode === 'web' ? '100%' : '0%') }} className="h-full overflow-hidden flex flex-col">
-                                <WebPanel url={fileContent.url} />
+                            
+                            <div style={{ width: viewMode === 'split' ? `${100 - splitPercent}%` : (viewMode === 'list' ? '100%' : '0%') }} className="h-full overflow-hidden flex flex-col">
+                                <VocabTablePanel 
+                                    fileContent={fileContent} 
+                                    selectedWordIds={selectedWordIds} setSelectedWordIds={setSelectedWordIds}
+                                    isSelectionMode={isSelectionMode} setIsSelectionMode={setIsSelectionMode} 
+                                />
                             </div>
                         </div>
                     </div>
@@ -269,28 +294,14 @@
             );
         };
 
-        const QuizPanel = ({ quizScale, setQuizScale, activeFile, isFinished, mistakeTracker, startQuiz, quizType, fileContent, sessionCards, isFlipped, setIsFlipped, mcqSelected, setMcqSelected, handleCorrect, handleIncorrect, showNextButton, setQuizType, setIsFinished }) => {
+        const QuizPanel = ({ quizScale, setQuizScale, activeFile, isFinished, mistakeTracker, startQuiz, quizType, fullVocab, activeDeck, sessionCards, isFlipped, setIsFlipped, mcqSelected, setMcqSelected, handleCorrect, handleIncorrect, showNextButton, setQuizType, setIsFinished, isSelectionMode }) => {
             const mcqOptions = useMemo(() => {
                 if (quizType !== 'mcq' || !sessionCards[0]) return [];
                 const correct = sessionCards[0];
-                const others = fileContent.vocab.filter(v => v.id !== correct.id).sort(() => Math.random() - 0.5).slice(0, 3);
+                // Draw fake answers from the FULL vocab list, not just the selected ones!
+                const others = fullVocab.filter(v => v.id !== correct.id).sort(() => Math.random() - 0.5).slice(0, 3);
                 return [correct, ...others].sort(() => Math.random() - 0.5);
-            }, [sessionCards, quizType, fileContent.vocab]);
-
-            // Smart Text Formatter: Shrinks and grays out brackets unless they are strictly numbers
-            const formatMeaningText = (text) => {
-                if (!text) return null;
-                const parts = text.split(/(\([^)]+\)|\[[^\]]+\])/g);
-                return parts.map((part, i) => {
-                    if (/^[\(\[]\d+[\)\]]$/.test(part)) {
-                        return part; // Pure digits like (1) or [2] stay normal
-                    }
-                    if (/^[\(\[].*[\)\]]$/.test(part)) {
-                        return <span key={i} className="text-slate-400 text-[0.85em] font-medium">{part}</span>; // Other brackets get grayed
-                    }
-                    return part;
-                });
-            };
+            }, [sessionCards, quizType, fullVocab]);
 
             return (
                 <div className="h-full bg-slate-50 flex flex-col items-center justify-center p-12 relative overflow-y-auto w-full">
@@ -307,20 +318,26 @@
                                 <h2 className="text-6xl font-black mb-4 text-slate-900 uppercase tracking-tighter leading-none font-bold">DONE</h2>
                                 <div className="space-y-6">
                                     {mistakeTracker.length > 0 && <button onClick={() => startQuiz(quizType, mistakeTracker)} className="w-full py-10 bg-indigo-600 text-white rounded-3xl font-black shadow-xl uppercase text-lg tracking-widest font-bold">Retry Mistakes ({mistakeTracker.length})</button>}
-                                    <button onClick={() => startQuiz(quizType, fileContent.vocab)} className="w-full py-10 bg-slate-100 text-slate-700 rounded-3xl font-black uppercase text-lg tracking-widest font-bold">Full Restart</button>
+                                    <button onClick={() => startQuiz(quizType, activeDeck)} className="w-full py-10 bg-slate-100 text-slate-700 rounded-3xl font-black uppercase text-lg tracking-widest font-bold">Full Restart</button>
                                     <button onClick={() => { setQuizType(null); setIsFinished(false); }} className="w-full py-6 text-indigo-600 font-black text-sm uppercase tracking-widest border-t border-slate-100 mt-6 font-bold">Menu</button>
                                 </div>
                             </div>
                         ) : !quizType ? (
-                            <div className="max-w-2xl w-full space-y-10 text-center font-bold">
-                                <h3 className="text-7xl font-black text-slate-900 mb-12 tracking-tighter leading-none font-bold">{fileContent.vocab.length} Words</h3>
-                                <button onClick={() => startQuiz('flash')} className="w-full py-16 bg-white border-2 border-slate-100 rounded-[4rem] shadow-sm hover:border-indigo-400 transition-all text-left px-20 group">
-                                    <div className="font-black text-slate-900 text-5xl group-hover:text-indigo-600 mb-2 uppercase font-bold">Flashcards</div>
+                            <div className="max-w-2xl w-full space-y-10 text-center font-bold relative">
+                                {isSelectionMode && activeDeck.length !== fullVocab.length && (
+                                    <div className="text-indigo-500 font-black uppercase tracking-widest text-sm mb-4">Specific Study Active</div>
+                                )}
+                                <h3 className="text-7xl font-black text-slate-900 mb-12 tracking-tighter leading-none font-bold">
+                                    {activeDeck.length} {activeDeck.length === 1 ? 'Word' : 'Words'}
+                                </h3>
+                                
+                                <button disabled={activeDeck.length === 0} onClick={() => startQuiz('flash')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${activeDeck.length === 0 ? 'bg-slate-100 opacity-40 border-slate-200' : 'bg-white hover:border-indigo-400 border-slate-100'}`}>
+                                    <div className={`font-black text-5xl mb-2 uppercase font-bold ${activeDeck.length === 0 ? 'text-slate-400' : 'text-slate-900 group-hover:text-indigo-600'}`}>Flashcards</div>
                                     <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none font-bold">Manual study</div>
                                 </button>
-                                <button disabled={fileContent.vocab.length < 4} onClick={() => startQuiz('mcq')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${fileContent.vocab.length < 4 ? 'bg-slate-100 opacity-40' : 'bg-white hover:border-indigo-400'}`}>
-                                    <div className="font-black text-slate-900 text-5xl mb-2 uppercase leading-none font-bold">Selection</div>
-                                    <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none font-bold">{fileContent.vocab.length < 4 ? "Need 4+ words" : "Loop until correct"}</div>
+                                <button disabled={fullVocab.length < 4 || activeDeck.length === 0} onClick={() => startQuiz('mcq')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${fullVocab.length < 4 || activeDeck.length === 0 ? 'bg-slate-100 opacity-40 border-slate-200' : 'bg-white hover:border-indigo-400 border-slate-100'}`}>
+                                    <div className={`font-black text-5xl mb-2 uppercase leading-none font-bold ${fullVocab.length < 4 || activeDeck.length === 0 ? 'text-slate-400' : 'text-slate-900'}`}>Selection</div>
+                                    <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none font-bold">{fullVocab.length < 4 ? "Need 4+ total words" : "Test yourself"}</div>
                                 </button>
                             </div>
                         ) : (
@@ -376,37 +393,84 @@
             );
         };
 
-        const WebPanel = ({ url }) => {
-            const getHostname = (link) => {
-                try { return new URL(link).hostname; } catch(e) { return link; }
+        const VocabTablePanel = ({ fileContent, selectedWordIds, setSelectedWordIds, isSelectionMode, setIsSelectionMode }) => {
+            const toggleSelection = (id) => {
+                if (selectedWordIds.includes(id)) {
+                    setSelectedWordIds(selectedWordIds.filter(v => v !== id));
+                } else {
+                    setSelectedWordIds([...selectedWordIds, id]);
+                }
+            };
+
+            const handleToggleMode = () => {
+                if (isSelectionMode) {
+                    // Exiting selection mode - clear selection
+                    setSelectedWordIds([]);
+                }
+                setIsSelectionMode(!isSelectionMode);
             };
 
             return (
                 <div className="h-full bg-white flex flex-col w-full relative">
-                    {url ? (
+                    {fileContent.vocab.length > 0 ? (
                         <>
+                            {/* Table Control Header */}
                             <div className="h-16 bg-slate-50 border-b border-slate-200 flex items-center justify-between px-8 shrink-0 z-10 shadow-sm">
-                                <div className="flex items-center gap-3 overflow-hidden">
-                                    <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse"></div>
-                                    <span className="text-[11px] font-black uppercase tracking-widest text-slate-500 truncate font-bold">
-                                        Source: {getHostname(url)}
-                                    </span>
+                                <div className="text-[11px] font-black uppercase tracking-widest text-slate-500 font-bold">Vocabulary List</div>
+                                <div className="flex items-center gap-4">
+                                    {isSelectionMode && (
+                                        <button onClick={() => setSelectedWordIds(fileContent.vocab.map(v => v.id))} className="text-[10px] font-black uppercase tracking-widest text-indigo-500 hover:text-indigo-700 font-bold">
+                                            Select All
+                                        </button>
+                                    )}
+                                    <button 
+                                        onClick={handleToggleMode} 
+                                        className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm active:scale-95 flex items-center gap-2 font-bold ${isSelectionMode ? 'bg-indigo-600 text-white shadow-indigo-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                                    >
+                                        {isSelectionMode ? "Clear & Exit Specific Study" : "Specific Study"}
+                                    </button>
                                 </div>
-                                <a 
-                                    href={url} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95 flex items-center gap-2 font-bold"
-                                >
-                                    Open in New Tab
-                                </a>
                             </div>
-                            <div className="flex-1 relative bg-slate-100">
-                                <iframe src={url} className="absolute inset-0 w-full h-full border-none"></iframe>
+                            
+                            {/* Scrollable Table */}
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                <table className="w-full text-left border-collapse">
+                                    <thead className="sticky top-0 bg-white/95 backdrop-blur z-10 shadow-sm">
+                                        <tr>
+                                            {isSelectionMode && <th className="w-16 p-4 border-b-2 border-slate-100"></th>}
+                                            <th className="p-4 border-b-2 border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400 w-1/4">Vocab</th>
+                                            <th className="p-4 border-b-2 border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400 w-1/4">Reading</th>
+                                            <th className="p-4 border-b-2 border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">Meaning</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {fileContent.vocab.map(v => {
+                                            const isSelected = selectedWordIds.includes(v.id);
+                                            return (
+                                                <tr 
+                                                    key={v.id} 
+                                                    onClick={() => isSelectionMode && toggleSelection(v.id)}
+                                                    className={`transition-colors border-b border-slate-50 ${isSelectionMode ? 'cursor-pointer hover:bg-slate-50' : ''} ${isSelected && isSelectionMode ? 'bg-indigo-50/60' : ''}`}
+                                                >
+                                                    {isSelectionMode && (
+                                                        <td className="p-4 text-center">
+                                                            <div className={`w-6 h-6 rounded flex items-center justify-center border-2 transition-colors mx-auto ${isSelected ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-slate-300 bg-white'}`}>
+                                                                {isSelected && <span className="font-bold text-sm">✓</span>}
+                                                            </div>
+                                                        </td>
+                                                    )}
+                                                    <td className="p-4 font-black text-2xl text-slate-800">{v.word}</td>
+                                                    <td className="p-4 font-bold text-base text-indigo-500">{v.reading}</td>
+                                                    <td className="p-4 font-bold text-base text-slate-600 whitespace-pre-wrap">{formatMeaningText(v.meaning)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
                             </div>
                         </>
                     ) : (
-                        <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest font-bold">No Link Provided</div>
+                        <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest font-bold">Select a Session First</div>
                     )}
                 </div>
             );
