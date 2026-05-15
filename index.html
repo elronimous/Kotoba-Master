@@ -31,8 +31,7 @@
 
         /**
          * --- GITHUB MANIFEST ---
-         * 1. Filenames must match EXACTLY (Case-Sensitive).
-         * 2. Do not include folder paths here, just the .txt name.
+         * You MUST put your actual filenames here for GitHub to see them.
          */
         const FILE_LIST = [
             "20260515_1602.txt",
@@ -55,6 +54,7 @@
             const [activeFile, setActiveFile] = useState(null);
             const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
             const [openMonth, setOpenMonth] = useState(new Date().getMonth());
+            const [debugLogs, setDebugLogs] = useState([]);
             
             const [fileContent, setFileContent] = useState({ url: '', title: '', vocab: [] });
             const [sessionCards, setSessionCards] = useState([]);
@@ -66,6 +66,8 @@
             const [isFinished, setIsFinished] = useState(false);
             const [isDragging, setIsDragging] = useState(false);
             const [showNextButton, setShowNextButton] = useState(false);
+
+            const addLog = (msg) => setDebugLogs(prev => [...prev, msg].slice(-5));
 
             const parseFileText = (text) => {
                 const lines = text.split(/\r?\n/).map(l => l.trim());
@@ -91,58 +93,43 @@
             };
 
             const scanDataFolder = async () => {
-                console.log("Starting GitHub file scan...");
+                addLog("Scanning manifest...");
                 const details = await Promise.all(FILE_LIST.map(async (name) => {
                     const year = name.substring(0, 4);
                     const mIdx = parseInt(name.substring(4, 6)) - 1;
                     const day = parseInt(name.substring(6, 8));
                     
-                    const possiblePaths = [
-                        `DATA/${year}/${MONTHS[mIdx]}/${name}`,
-                        `DATA/${name}`
-                    ];
+                    const path = `DATA/${year}/${MONTHS[mIdx]}/${name}`;
 
-                    let title = name;
-                    let finalPath = "";
-
-                    for (let p of possiblePaths) {
-                        try {
-                            const res = await fetch(p + "?t=" + Date.now()); // Cache buster
-                            if (res.ok) { 
-                                const t = await res.text(); 
-                                const parsed = parseFileText(t);
-                                title = parsed.title; 
-                                finalPath = p; 
-                                console.log(`Successfully found: ${p}`);
-                                break; 
-                            }
-                        } catch (e) {
-                            console.warn(`Failed to fetch at path: ${p}`);
+                    try {
+                        const res = await fetch(path + "?v=" + Math.random());
+                        if (res.ok) {
+                            const t = await res.text();
+                            const parsed = parseFileText(t);
+                            return { fileName: name, year, month: mIdx, dayLabel: getOrdinal(day), displayTitle: parsed.title, fullPath: path };
                         }
+                        addLog(`404: ${path}`);
+                    } catch (e) {
+                        addLog(`Error: ${name}`);
                     }
-                    return { fileName: name, year, month: mIdx, dayLabel: getOrdinal(day), displayTitle: title, fullPath: finalPath };
+                    return null;
                 }));
-                const filtered = details.filter(f => f.fullPath);
-                console.log("Files loaded into sidebar:", filtered);
+                const filtered = details.filter(Boolean);
+                if (filtered.length === 0) addLog("No files found. Check Case/Paths.");
                 setFiles(filtered);
             };
 
             useEffect(() => { scanDataFolder(); }, []);
 
             const loadFile = async (f) => {
-                console.log(`Loading session: ${f.fullPath}`);
                 try {
-                    const res = await fetch(f.fullPath + "?t=" + Date.now());
-                    const text = await res.text();
-                    const parsed = parseFileText(text);
-                    console.log(`Parsed ${parsed.vocab.length} words.`);
+                    const res = await fetch(f.fullPath + "?v=" + Math.random());
+                    const parsed = parseFileText(await res.text());
                     setFileContent(parsed);
                     setActiveFile(f.fileName);
                     setQuizType(null);
                     setIsFinished(false);
-                } catch (e) {
-                    console.error("Error loading file contents:", e);
-                }
+                } catch (e) { addLog("Load failed."); }
             };
 
             const startQuiz = (type, cards = fileContent.vocab) => {
@@ -188,23 +175,24 @@
                     let percent = (relativeX / workspaceWidth) * 100;
                     setSplitPercent(Math.min(Math.max(percent, 10), 90));
                 };
-                const handleMouseUp = () => {
-                    setIsDragging(false);
-                    document.body.style.cursor = 'default';
-                };
+                const handleMouseUp = () => { setIsDragging(false); document.body.style.cursor = 'default'; };
                 if (isDragging) {
                     window.addEventListener('mousemove', handleMouseMove);
                     window.addEventListener('mouseup', handleMouseUp);
                     document.body.style.cursor = 'col-resize';
                 }
-                return () => {
-                    window.removeEventListener('mousemove', handleMouseMove);
-                    window.removeEventListener('mouseup', handleMouseUp);
-                };
+                return () => { window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('mouseup', handleMouseUp); };
             }, [isDragging]);
 
             return (
                 <div className="flex h-screen w-screen overflow-hidden select-none bg-slate-100">
+                    {/* DEBUG OVERLAY */}
+                    {debugLogs.length > 0 && files.length === 0 && (
+                        <div className="fixed bottom-4 right-4 bg-black/80 text-green-400 p-4 rounded-xl text-[10px] font-mono z-[9999] pointer-events-none">
+                            {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
+                        </div>
+                    )}
+
                     <div className="w-80 bg-slate-900 text-slate-400 flex flex-col flex-shrink-0 z-50 shadow-2xl">
                         <div className="p-6 border-b border-slate-800 flex items-center justify-between text-white">
                             <button onClick={() => setCurrentYear(y => y-1)} className="p-2 hover:bg-slate-800 rounded-lg transition-colors">{"<"}</button>
@@ -218,12 +206,12 @@
                                 return (
                                     <div key={m} className="border-b border-slate-800/30">
                                         <button onClick={() => setOpenMonth(openMonth === idx ? null : idx)} className={`w-full flex justify-between px-6 py-5 text-xs font-black tracking-[0.2em] ${openMonth === idx ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/30 text-slate-500'}`}>
-                                            {m} <span className="bg-indigo-600 text-white px-2 rounded-md">{monthFiles.length}</span>
+                                            {m} <span className="bg-indigo-600 text-white px-2 rounded-md font-bold">{monthFiles.length}</span>
                                         </button>
                                         {openMonth === idx && monthFiles.map(f => (
                                             <button key={f.fileName} onClick={() => loadFile(f)} className={`w-full text-left pl-8 pr-4 py-4 text-[11px] border-l-4 transition-all ${activeFile === f.fileName ? 'text-indigo-400 bg-indigo-500/5 border-indigo-500 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
                                                 <span className="opacity-40 mr-2 font-black">{f.dayLabel} —</span>
-                                                <span className="truncate uppercase tracking-tight">{f.displayTitle}</span>
+                                                <span className="truncate uppercase tracking-tight font-bold">{f.displayTitle}</span>
                                             </button>
                                         ))}
                                     </div>
@@ -278,8 +266,8 @@
             return (
                 <div className="h-full bg-slate-50 flex flex-col items-center justify-center p-12 relative overflow-y-auto w-full">
                     <div className="absolute top-6 right-10 flex gap-2 z-50">
-                        <button onClick={() => setQuizScale(Math.max(quizScale - 0.1, 0.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50 transition-colors">-</button>
-                        <button onClick={() => setQuizScale(Math.min(quizScale + 0.1, 1.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50 transition-colors">+</button>
+                        <button onClick={() => setQuizScale(Math.max(quizScale - 0.1, 0.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50">-</button>
+                        <button onClick={() => setQuizScale(Math.min(quizScale + 0.1, 1.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50">+</button>
                     </div>
 
                     <div className="quiz-scale-container w-full flex flex-col items-center justify-center" style={{ transform: `scale(${quizScale})` }}>
@@ -288,23 +276,23 @@
                         ) : isFinished ? (
                             <div className="max-w-2xl w-full text-center p-16 bg-white rounded-[4rem] shadow-2xl border border-slate-100">
                                 <div className="text-8xl mb-8 font-normal">{mistakeTracker.length === 0 ? "🏆" : "🔥"}</div>
-                                <h2 className="text-6xl font-black mb-4 text-slate-900 uppercase tracking-tighter leading-none">DONE</h2>
+                                <h2 className="text-6xl font-black mb-4 text-slate-900 uppercase tracking-tighter leading-none font-bold">DONE</h2>
                                 <div className="space-y-6">
-                                    {mistakeTracker.length > 0 && <button onClick={() => startQuiz(quizType, mistakeTracker)} className="w-full py-10 bg-indigo-600 text-white rounded-3xl font-black shadow-xl uppercase text-lg tracking-widest">Retry Mistakes ({mistakeTracker.length})</button>}
-                                    <button onClick={() => startQuiz(quizType, fileContent.vocab)} className="w-full py-10 bg-slate-100 text-slate-700 rounded-3xl font-black uppercase text-lg tracking-widest">Full Restart</button>
-                                    <button onClick={() => { setQuizType(null); setIsFinished(false); }} className="w-full py-6 text-indigo-600 font-black text-sm uppercase tracking-widest border-t border-slate-100 mt-6">Exit to Menu</button>
+                                    {mistakeTracker.length > 0 && <button onClick={() => startQuiz(quizType, mistakeTracker)} className="w-full py-10 bg-indigo-600 text-white rounded-3xl font-black shadow-xl uppercase text-lg tracking-widest font-bold">Retry Mistakes ({mistakeTracker.length})</button>}
+                                    <button onClick={() => startQuiz(quizType, fileContent.vocab)} className="w-full py-10 bg-slate-100 text-slate-700 rounded-3xl font-black uppercase text-lg tracking-widest font-bold">Full Restart</button>
+                                    <button onClick={() => { setQuizType(null); setIsFinished(false); }} className="w-full py-6 text-indigo-600 font-black text-sm uppercase tracking-widest border-t border-slate-100 mt-6 font-bold">Exit to Menu</button>
                                 </div>
                             </div>
                         ) : !quizType ? (
                             <div className="max-w-2xl w-full space-y-10 text-center">
-                                <h3 className="text-7xl font-black text-slate-900 mb-12 tracking-tighter leading-none">{fileContent.vocab.length} Words</h3>
+                                <h3 className="text-7xl font-black text-slate-900 mb-12 tracking-tighter leading-none font-bold">{fileContent.vocab.length} Words</h3>
                                 <button onClick={() => startQuiz('flash')} className="w-full py-16 bg-white border-2 border-slate-100 rounded-[4rem] shadow-sm hover:border-indigo-400 transition-all text-left px-20 group">
-                                    <div className="font-black text-slate-900 text-5xl group-hover:text-indigo-600 mb-2 uppercase">Flashcards</div>
-                                    <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none">Loop until correct</div>
+                                    <div className="font-black text-slate-900 text-5xl group-hover:text-indigo-600 mb-2 uppercase font-bold">Flashcards</div>
+                                    <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none font-bold">Loop until correct</div>
                                 </button>
                                 <button disabled={fileContent.vocab.length < 4} onClick={() => startQuiz('mcq')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${fileContent.vocab.length < 4 ? 'bg-slate-100 opacity-40' : 'bg-white hover:border-indigo-400'}`}>
-                                    <div className="font-black text-slate-900 text-5xl mb-2 uppercase leading-none">Multiple Choice</div>
-                                    <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none">{fileContent.vocab.length < 4 ? "Need 4+ words" : "Loop until correct"}</div>
+                                    <div className="font-black text-slate-900 text-5xl mb-2 uppercase leading-none font-bold">Multiple Choice</div>
+                                    <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none font-bold">{fileContent.vocab.length < 4 ? "Need 4+ words" : "Loop until correct"}</div>
                                 </button>
                             </div>
                         ) : (
@@ -312,11 +300,11 @@
                                 <div className="aspect-[16/8] w-full perspective-2000 mb-12 cursor-pointer" onClick={() => { if (quizType === 'flash' && !showNextButton) setIsFlipped(!isFlipped); if (mcqSelected) handleCorrect(); if (showNextButton) handleIncorrect(); }}>
                                     <div className={`w-full h-full card-inner relative ${isFlipped || mcqSelected ? 'flipped' : ''}`}>
                                         <div className="absolute w-full h-full bg-white rounded-[4rem] shadow-2xl border border-slate-100 flex flex-col items-center justify-center p-20 backface-hidden">
-                                            <h1 className="text-7xl font-black text-slate-900 mb-12 select-text text-center leading-none" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h1>
-                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none">Reveal Answer</div>
+                                            <h1 className="text-7xl font-black text-slate-900 mb-12 select-text text-center leading-none font-bold" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h1>
+                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none font-bold">Reveal Answer</div>
                                         </div>
-                                        <div className="absolute w-full h-full bg-indigo-600 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white">
-                                            <h3 className="text-5xl font-black mb-6 select-text leading-none" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h3>
+                                        <div className="absolute w-full h-full bg-indigo-600 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white font-bold">
+                                            <h3 className="text-5xl font-black mb-6 select-text leading-none">{sessionCards[0].word}</h3>
                                             <p className="text-indigo-200 text-3xl font-black mb-12 select-text leading-none">【 {sessionCards[0].reading} 】</p>
                                             <p className="text-2xl leading-relaxed whitespace-pre-wrap font-bold text-center select-text">{sessionCards[0].meaning}</p>
                                         </div>
@@ -325,22 +313,22 @@
                                 <div className="w-full">
                                     {quizType === 'flash' ? (
                                         showNextButton ? (
-                                            <button onClick={handleIncorrect} className="w-full py-10 bg-indigo-600 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95">Next Card</button>
+                                            <button onClick={handleIncorrect} className="w-full py-10 bg-indigo-600 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95 font-bold">Next Card</button>
                                         ) : (
                                             <div className="grid grid-cols-2 gap-10">
-                                                <button onClick={handleIncorrect} className="py-10 bg-white border-2 border-red-50 rounded-[2.5rem] text-red-500 font-black text-xl hover:bg-red-50 shadow-xl transition-all uppercase tracking-widest leading-none">Incorrect</button>
-                                                <button onClick={handleCorrect} className="py-10 bg-white border-2 border-green-50 rounded-[2.5rem] text-green-500 font-black text-xl hover:bg-green-50 shadow-xl transition-all uppercase tracking-widest leading-none">Correct</button>
+                                                <button onClick={handleIncorrect} className="py-10 bg-white border-2 border-red-50 rounded-[2.5rem] text-red-500 font-black text-xl hover:bg-red-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold">Incorrect</button>
+                                                <button onClick={handleCorrect} className="py-10 bg-white border-2 border-green-50 rounded-[2.5rem] text-green-500 font-black text-xl hover:bg-green-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold">Correct</button>
                                             </div>
                                         )
                                     ) : (
                                         <div className="grid grid-cols-1 gap-6 w-full">
                                             {mcqOptions.map(opt => {
                                                 const isCorrect = opt.id === sessionCards[0].id, isSelected = mcqSelected?.id === opt.id;
-                                                let style = "bg-white border-slate-200 text-slate-700 hover:border-indigo-400";
+                                                let style = "bg-white border-slate-200 text-slate-700 hover:border-indigo-400 font-bold";
                                                 if (mcqSelected) {
-                                                    if (isCorrect) style = "bg-green-500 border-green-500 text-white shadow-2xl";
-                                                    else if (isSelected) style = "bg-red-500 border-red-500 text-white shadow-2xl";
-                                                    else style = "bg-white border-slate-100 text-slate-300 opacity-40";
+                                                    if (isCorrect) style = "bg-green-500 border-green-500 text-white shadow-2xl font-bold";
+                                                    else if (isSelected) style = "bg-red-500 border-red-500 text-white shadow-2xl font-bold";
+                                                    else style = "bg-white border-slate-100 text-slate-300 opacity-40 font-bold";
                                                 }
                                                 return <button key={opt.id} disabled={!!mcqSelected} onClick={() => { if (isCorrect) handleCorrect(); else { handleIncorrect(); setMcqSelected(opt); } }} className={`py-8 px-12 rounded-[2.5rem] border-4 text-2xl font-black transition-all text-left uppercase tracking-tight leading-tight ${style}`}>{opt.meaning.split('\n')[0].substring(0, 140)}</button>;
                                             })}
@@ -356,7 +344,7 @@
 
         const WebPanel = ({ url }) => (
             <div className="h-full bg-white flex flex-col w-full">
-                {url ? <iframe src={url} className="w-full h-full border-none"></iframe> : <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest">No Link Provided</div>}
+                {url ? <iframe src={url} className="w-full h-full border-none"></iframe> : <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest font-bold">No Link Provided</div>}
             </div>
         );
 
