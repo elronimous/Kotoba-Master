@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kotoba Master | Dashboard</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/lucide-static@0.344.0/font/lucide.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Inter', sans-serif; overflow: hidden; background: #f8fafc; }
+        .card-inner { transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); transform-style: preserve-3d; }
+        .flipped { transform: rotateY(180deg); }
+        .backface-hidden { backface-visibility: hidden; }
+        .resizer { width: 12px; cursor: col-resize; background: #f1f5f9; z-index: 40; transition: background 0.2s; }
+        .resizer:hover, .resizer.dragging { background: #6366f1; }
+        .rotate-y-180 { transform: rotateY(180deg); }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        .quiz-scale-container { transition: transform 0.2s ease-out; transform-origin: center; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+        const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+        const getOrdinal = (n) => {
+            const s = ["th", "st", "nd", "rd"], v = n % 100;
+            return n + (s[(v - 20) % 10] || s[v] || s[0]);
+        };
+
+        const App = () => {
+            const [viewMode, setViewMode] = useState('split');
+            const [splitPercent, setSplitPercent] = useState(75); 
+            const [isSwapped, setIsSwapped] = useState(false); 
+            const [quizScale, setQuizScale] = useState(1.0);
+            const [files, setFiles] = useState([]);
+            const [activeFile, setActiveFile] = useState(null);
+            const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+            const [openMonth, setOpenMonth] = useState(new Date().getMonth());
+            
+            const [fileContent, setFileContent] = useState({ url: '', title: '', vocab: [] });
+            const [sessionCards, setSessionCards] = useState([]);
+            const [mistakeTracker, setMistakeTracker] = useState([]);
+            
+            const [quizType, setQuizType] = useState(null);
+            const [isFlipped, setIsFlipped] = useState(false);
+            const [mcqSelected, setMcqSelected] = useState(null);
+            const [isFinished, setIsFinished] = useState(false);
+            const [isDragging, setIsDragging] = useState(false);
+            const [showNextButton, setShowNextButton] = useState(false);
+
+            const parseFileText = (text) => {
+                const lines = text.split(/\r?\n/).map(l => l.trim());
+                const url = lines[0] || '';
+                const title = lines[1] || 'Untitled';
+                const vocab = [];
+                let currentItem = null;
+
+                for (let i = 2; i < lines.length; i++) {
+                    const line = lines[i];
+                    if (!line) continue;
+                    const headMatch = line.match(/^([^\[]+)(?:\[([^\]]+)\])?/);
+                    if (headMatch && !line.startsWith('(')) {
+                        if (currentItem) vocab.push(currentItem);
+                        currentItem = { id: vocab.length, word: headMatch[1].trim(), reading: (headMatch[2] || headMatch[1]).trim(), meaning: "" };
+                    } else if (currentItem) {
+                        const formattedLine = line.replace(/(\(\d+\))/g, '\n$1').trim();
+                        currentItem.meaning += (currentItem.meaning ? '\n' : '') + formattedLine;
+                    }
+                }
+                if (currentItem) vocab.push(currentItem);
+                return { url, title, vocab };
+            };
+
+            const scanDataFolder = async () => {
+                try {
+                    const response = await fetch('./DATA/');
+                    const htmlText = await response.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(htmlText, 'text/html');
+                    const links = Array.from(doc.querySelectorAll('a'))
+                        .map(a => decodeURIComponent(a.getAttribute('href')))
+                        .filter(href => href.toLowerCase().endsWith('.txt'));
+
+                    const details = await Promise.all(links.map(async (name) => {
+                        const year = name.substring(0, 4), mIdx = parseInt(name.substring(4, 6)) - 1, day = parseInt(name.substring(6, 8));
+                        const possiblePaths = [`./DATA/${year}/${MONTHS[mIdx]}/${name}`, `./DATA/${name}`];
+                        let title = name, path = possiblePaths[0];
+                        for (let p of possiblePaths) {
+                            try {
+                                const res = await fetch(p);
+                                if (res.ok) { const t = await res.text(); title = parseFileText(t).title; path = p; break; }
+                            } catch (e) {}
+                        }
+                        return { fileName: name, year, month: mIdx, dayLabel: getOrdinal(day), displayTitle: title, fullPath: path };
+                    }));
+                    setFiles(details);
+                } catch (e) {}
+            };
+
+            useEffect(() => { scanDataFolder(); }, []);
+
+            const loadFile = async (f) => {
+                try {
+                    const res = await fetch(f.fullPath);
+                    const parsed = parseFileText(await res.text());
+                    setFileContent(parsed);
+                    setActiveFile(f.fileName);
+                    setQuizType(null);
+                    setIsFinished(false);
+                } catch (e) {}
+            };
+
+            const startQuiz = (type, cards = fileContent.vocab) => {
+                setSessionCards([...cards].sort(() => Math.random() - 0.5));
+                setQuizType(type);
+                setIsFinished(false);
+                setIsFlipped(false);
+                setMcqSelected(null);
+                setMistakeTracker([]);
+                setShowNextButton(false);
+            };
+
+            const handleCorrect = () => {
+                const next = sessionCards.slice(1);
+                if (next.length === 0) setIsFinished(true);
+                else { setSessionCards(next); setIsFlipped(false); setMcqSelected(null); setShowNextButton(false); }
+            };
+
+            const handleIncorrect = () => {
+                const current = sessionCards[0];
+                if (!mistakeTracker.find(c => c.id === current.id)) setMistakeTracker(prev => [...prev, current]);
+                if (quizType === 'flash' && !isFlipped) {
+                    setIsFlipped(true);
+                    setShowNextButton(true);
+                } else {
+                    const remaining = sessionCards.slice(1);
+                    const randomIndex = Math.floor(Math.random() * (remaining.length + 1));
+                    const newDeck = [...remaining];
+                    newDeck.splice(randomIndex, 0, current);
+                    setSessionCards(newDeck);
+                    setIsFlipped(false);
+                    setMcqSelected(null);
+                    setShowNextButton(false);
+                }
+            };
+
+            // Bulletproof Resizer: Listen to the Window, not the Divider
+            useEffect(() => {
+                const handleMouseMove = (e) => {
+                    if (!isDragging) return;
+                    const sidebarWidth = 320;
+                    const workspaceWidth = window.innerWidth - sidebarWidth;
+                    let relativeX = e.clientX - sidebarWidth;
+                    let percent = (relativeX / workspaceWidth) * 100;
+                    setSplitPercent(Math.min(Math.max(percent, 10), 90));
+                };
+
+                const handleMouseUp = () => {
+                    setIsDragging(false);
+                    document.body.style.cursor = 'default';
+                };
+
+                if (isDragging) {
+                    window.addEventListener('mousemove', handleMouseMove);
+                    window.addEventListener('mouseup', handleMouseUp);
+                    document.body.style.cursor = 'col-resize';
+                }
+
+                return () => {
+                    window.removeEventListener('mousemove', handleMouseMove);
+                    window.removeEventListener('mouseup', handleMouseUp);
+                };
+            }, [isDragging]);
+
+            return (
+                <div className="flex h-screen w-screen overflow-hidden select-none bg-slate-100">
+                    {/* SIDEBAR */}
+                    <div className="w-80 bg-slate-900 text-slate-400 flex flex-col flex-shrink-0 z-50 shadow-2xl">
+                        <div className="p-6 border-b border-slate-800 flex items-center justify-between text-white">
+                            <button onClick={() => setCurrentYear(y => y-1)} className="p-2 hover:bg-slate-800 rounded-lg">{"<"}</button>
+                            <span className="font-black text-2xl tracking-tighter">{currentYear}</span>
+                            <button onClick={() => setCurrentYear(y => y+1)} className="p-2 hover:bg-slate-800 rounded-lg">{">"}</button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar">
+                            {MONTHS.map((m, idx) => {
+                                const monthFiles = files.filter(f => f.year === String(currentYear) && f.month === idx);
+                                if (monthFiles.length === 0) return null;
+                                return (
+                                    <div key={m} className="border-b border-slate-800/30">
+                                        <button onClick={() => setOpenMonth(openMonth === idx ? null : idx)} className={`w-full flex justify-between px-6 py-5 text-xs font-black tracking-[0.2em] ${openMonth === idx ? 'bg-slate-800 text-white' : 'hover:bg-slate-800/30 text-slate-500'}`}>
+                                            {m} <span className="bg-indigo-600 text-white px-2 rounded-md">{monthFiles.length}</span>
+                                        </button>
+                                        {openMonth === idx && monthFiles.map(f => (
+                                            <button key={f.fileName} onClick={() => loadFile(f)} className={`w-full text-left pl-8 pr-4 py-4 text-[11px] border-l-4 transition-all ${activeFile === f.fileName ? 'text-indigo-400 bg-indigo-500/5 border-indigo-500 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+                                                <span className="opacity-40 mr-2 font-black">{f.dayLabel} —</span>
+                                                <span className="truncate uppercase tracking-tight">{f.displayTitle}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="flex-1 flex flex-col min-w-0">
+                        <header className="h-16 bg-white border-b flex items-center justify-between px-10 z-10 shadow-sm">
+                            <h2 className="font-black text-slate-900 truncate text-sm tracking-tight uppercase">{fileContent.title || "Kotoba Master"}</h2>
+                            <div className="flex items-center gap-4">
+                                <button onClick={() => { setIsSwapped(!isSwapped); setSplitPercent(100 - splitPercent); }} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all border border-transparent hover:border-indigo-100 flex items-center gap-2">
+                                    <i className="lucide-arrow-left-right text-lg"></i>
+                                    <span className="text-[10px] font-black uppercase tracking-widest">Swap Sides</span>
+                                </button>
+                                <div className="h-6 w-[1px] bg-slate-200"></div>
+                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                    {['quiz', 'split', 'web'].map(mode => (
+                                        <button key={mode} onClick={() => setViewMode(mode)} className={`px-6 py-2 text-[10px] font-black rounded-lg transition-all ${viewMode === mode ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                                            {mode.toUpperCase()}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </header>
+
+                        <div className="flex-1 flex overflow-hidden">
+                            <div style={{ width: viewMode === 'split' ? `${splitPercent}%` : (viewMode === 'quiz' ? (isSwapped ? '0%' : '100%') : (isSwapped ? '100%' : '0%')) }} className="h-full overflow-hidden flex flex-col">
+                                {isSwapped ? <WebPanel url={fileContent.url} /> : <QuizPanel quizScale={quizScale} setQuizScale={setQuizScale} activeFile={activeFile} isFinished={isFinished} mistakeTracker={mistakeTracker} startQuiz={startQuiz} quizType={quizType} fileContent={fileContent} sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished} />}
+                            </div>
+
+                            {viewMode === 'split' && <div className={`resizer ${isDragging ? 'dragging' : ''}`} onMouseDown={() => setIsDragging(true)}></div>}
+
+                            <div style={{ width: viewMode === 'split' ? `${100 - splitPercent}%` : (viewMode === 'quiz' ? (isSwapped ? '100%' : '0%') : (isSwapped ? '0%' : '100%')) }} className="h-full overflow-hidden flex flex-col">
+                                {isSwapped ? <QuizPanel quizScale={quizScale} setQuizScale={setQuizScale} activeFile={activeFile} isFinished={isFinished} mistakeTracker={mistakeTracker} startQuiz={startQuiz} quizType={quizType} fileContent={fileContent} sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished} /> : <WebPanel url={fileContent.url} />}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const QuizPanel = ({ quizScale, setQuizScale, activeFile, isFinished, mistakeTracker, startQuiz, quizType, fileContent, sessionCards, isFlipped, setIsFlipped, mcqSelected, setMcqSelected, handleCorrect, handleIncorrect, showNextButton, setQuizType, setIsFinished }) => {
+            const mcqOptions = useMemo(() => {
+                if (quizType !== 'mcq' || !sessionCards[0]) return [];
+                const correct = sessionCards[0];
+                const others = fileContent.vocab.filter(v => v.id !== correct.id).sort(() => Math.random() - 0.5).slice(0, 3);
+                return [correct, ...others].sort(() => Math.random() - 0.5);
+            }, [sessionCards, quizType, fileContent.vocab]);
+
+            return (
+                <div className="h-full bg-slate-50 flex flex-col items-center justify-center p-12 relative overflow-y-auto w-full">
+                    <div className="absolute top-6 right-10 flex gap-2 z-50">
+                        <button onClick={() => setQuizScale(Math.max(quizScale - 0.1, 0.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50 transition-colors">-</button>
+                        <button onClick={() => setQuizScale(Math.min(quizScale + 0.1, 1.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50 transition-colors">+</button>
+                    </div>
+
+                    <div className="quiz-scale-container w-full flex flex-col items-center justify-center" style={{ transform: `scale(${quizScale})` }}>
+                        {!activeFile ? (
+                            <div className="text-slate-300 font-black uppercase tracking-[0.3em] text-[10px]">Select session</div>
+                        ) : isFinished ? (
+                            <div className="max-w-2xl w-full text-center p-16 bg-white rounded-[4rem] shadow-2xl border border-slate-100">
+                                <div className="text-8xl mb-8">{mistakeTracker.length === 0 ? "🏆" : "🔥"}</div>
+                                <h2 className="text-6xl font-black mb-4 text-slate-900 uppercase tracking-tighter leading-none">DONE</h2>
+                                <div className="space-y-6">
+                                    {mistakeTracker.length > 0 && <button onClick={() => startQuiz(quizType, mistakeTracker)} className="w-full py-10 bg-indigo-600 text-white rounded-3xl font-black shadow-xl uppercase text-lg tracking-widest">Retry Mistakes ({mistakeTracker.length})</button>}
+                                    <button onClick={() => startQuiz(quizType, fileContent.vocab)} className="w-full py-10 bg-slate-100 text-slate-700 rounded-3xl font-black uppercase text-lg tracking-widest">Full Restart</button>
+                                    <button onClick={() => { setQuizType(null); setIsFinished(false); }} className="w-full py-6 text-indigo-600 font-black text-sm uppercase tracking-widest border-t border-slate-100 mt-6">Exit to Menu</button>
+                                </div>
+                            </div>
+                        ) : !quizType ? (
+                            <div className="max-w-2xl w-full space-y-10 text-center">
+                                <h3 className="text-7xl font-black text-slate-900 mb-12 tracking-tighter leading-none">{fileContent.vocab.length} Words</h3>
+                                <button onClick={() => startQuiz('flash')} className="w-full py-16 bg-white border-2 border-slate-100 rounded-[4rem] shadow-sm hover:border-indigo-400 transition-all text-left px-20 group">
+                                    <div className="font-black text-slate-900 text-5xl group-hover:text-indigo-600 mb-2 uppercase">Flashcards</div>
+                                    <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none">Loop until correct</div>
+                                </button>
+                                <button disabled={fileContent.vocab.length < 4} onClick={() => startQuiz('mcq')} className={`w-full py-16 border-2 rounded-[4rem] shadow-sm transition-all text-left px-20 group ${fileContent.vocab.length < 4 ? 'bg-slate-100 opacity-40' : 'bg-white hover:border-indigo-400'}`}>
+                                    <div className="font-black text-slate-900 text-5xl mb-2 uppercase leading-none">Multiple Choice</div>
+                                    <div className="text-slate-400 text-sm font-black uppercase tracking-widest leading-none">{fileContent.vocab.length < 4 ? "Need 4+ words" : "Loop until correct"}</div>
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="w-full max-w-4xl flex flex-col items-center">
+                                <div className="aspect-[16/8] w-full perspective-2000 mb-12 cursor-pointer" onClick={() => { if (quizType === 'flash' && !showNextButton) setIsFlipped(!isFlipped); if (mcqSelected) handleCorrect(); if (showNextButton) handleIncorrect(); }}>
+                                    <div className={`w-full h-full card-inner relative ${isFlipped || mcqSelected ? 'flipped' : ''}`}>
+                                        <div className="absolute w-full h-full bg-white rounded-[4rem] shadow-2xl border border-slate-100 flex flex-col items-center justify-center p-20 backface-hidden">
+                                            <h1 className="text-7xl font-black text-slate-900 mb-12 select-text text-center leading-none" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h1>
+                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none">Reveal</div>
+                                        </div>
+                                        <div className="absolute w-full h-full bg-indigo-600 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white">
+                                            <h3 className="text-5xl font-black mb-6 select-text leading-none" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h3>
+                                            <p className="text-indigo-200 text-3xl font-black mb-12 select-text leading-none">【 {sessionCards[0].reading} 】</p>
+                                            <p className="text-2xl leading-relaxed whitespace-pre-wrap font-bold text-center select-text">{sessionCards[0].meaning}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="w-full">
+                                    {quizType === 'flash' ? (
+                                        showNextButton ? (
+                                            <button onClick={handleIncorrect} className="w-full py-10 bg-indigo-600 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95">Next Card</button>
+                                        ) : (
+                                            <div className="grid grid-cols-2 gap-10">
+                                                <button onClick={handleIncorrect} className="py-10 bg-white border-2 border-red-50 rounded-[2.5rem] text-red-500 font-black text-xl hover:bg-red-50 shadow-xl transition-all uppercase tracking-widest leading-none">Incorrect</button>
+                                                <button onClick={handleCorrect} className="py-10 bg-white border-2 border-green-50 rounded-[2.5rem] text-green-500 font-black text-xl hover:bg-green-50 shadow-xl transition-all uppercase tracking-widest leading-none">Correct</button>
+                                            </div>
+                                        )
+                                    ) : (
+                                        <div className="grid grid-cols-1 gap-6 w-full">
+                                            {mcqOptions.map(opt => {
+                                                const isCorrect = opt.id === sessionCards[0].id, isSelected = mcqSelected?.id === opt.id;
+                                                let style = "bg-white border-slate-200 text-slate-700 hover:border-indigo-400";
+                                                if (mcqSelected) {
+                                                    if (isCorrect) style = "bg-green-500 border-green-500 text-white shadow-2xl";
+                                                    else if (isSelected) style = "bg-red-500 border-red-500 text-white shadow-2xl";
+                                                    else style = "bg-white border-slate-100 text-slate-300 opacity-40";
+                                                }
+                                                return <button key={opt.id} disabled={!!mcqSelected} onClick={() => { if (isCorrect) handleCorrect(); else { handleIncorrect(); setMcqSelected(opt); } }} className={`py-8 px-12 rounded-[2.5rem] border-4 text-2xl font-black transition-all text-left uppercase tracking-tight leading-tight ${style}`}>{opt.meaning.split('\n')[0].substring(0, 140)}</button>;
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const WebPanel = ({ url }) => (
+            <div className="h-full bg-white flex flex-col w-full">
+                {url ? <iframe src={url} className="w-full h-full border-none"></iframe> : <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest">No Link</div>}
+            </div>
+        );
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
