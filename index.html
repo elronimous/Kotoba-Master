@@ -29,6 +29,16 @@
     <script type="text/babel">
         const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
+        /**
+         * --- GITHUB MANIFEST ---
+         * Add your filenames here exactly as they appear in your DATA folder.
+         * Example: "20260515_1602.txt"
+         */
+        const FILE_LIST = [
+            "20260515_1602.txt",
+            "20260514_0900.txt"
+        ];
+
         const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
         const getOrdinal = (n) => {
@@ -57,6 +67,7 @@
             const [isDragging, setIsDragging] = useState(false);
             const [showNextButton, setShowNextButton] = useState(false);
 
+            // --- Robust Parser ---
             const parseFileText = (text) => {
                 const lines = text.split(/\r?\n/).map(l => l.trim());
                 const url = lines[0] || '';
@@ -70,7 +81,12 @@
                     const headMatch = line.match(/^([^\[]+)(?:\[([^\]]+)\])?/);
                     if (headMatch && !line.startsWith('(')) {
                         if (currentItem) vocab.push(currentItem);
-                        currentItem = { id: vocab.length, word: headMatch[1].trim(), reading: (headMatch[2] || headMatch[1]).trim(), meaning: "" };
+                        currentItem = { 
+                            id: vocab.length, 
+                            word: headMatch[1].trim(), 
+                            reading: (headMatch[2] || headMatch[1]).trim(), 
+                            meaning: "" 
+                        };
                     } else if (currentItem) {
                         const formattedLine = line.replace(/(\(\d+\))/g, '\n$1').trim();
                         currentItem.meaning += (currentItem.meaning ? '\n' : '') + formattedLine;
@@ -80,30 +96,35 @@
                 return { url, title, vocab };
             };
 
+            // --- GitHub-Ready Scanner ---
             const scanDataFolder = async () => {
-                try {
-                    const response = await fetch('./DATA/');
-                    const htmlText = await response.text();
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(htmlText, 'text/html');
-                    const links = Array.from(doc.querySelectorAll('a'))
-                        .map(a => decodeURIComponent(a.getAttribute('href')))
-                        .filter(href => href.toLowerCase().endsWith('.txt'));
+                const details = await Promise.all(FILE_LIST.map(async (name) => {
+                    const year = name.substring(0, 4);
+                    const mIdx = parseInt(name.substring(4, 6)) - 1;
+                    const day = parseInt(name.substring(6, 8));
+                    
+                    const possiblePaths = [
+                        `./DATA/${year}/${MONTHS[mIdx]}/${name}`,
+                        `./DATA/${name}`
+                    ];
 
-                    const details = await Promise.all(links.map(async (name) => {
-                        const year = name.substring(0, 4), mIdx = parseInt(name.substring(4, 6)) - 1, day = parseInt(name.substring(6, 8));
-                        const possiblePaths = [`./DATA/${year}/${MONTHS[mIdx]}/${name}`, `./DATA/${name}`];
-                        let title = name, path = possiblePaths[0];
-                        for (let p of possiblePaths) {
-                            try {
-                                const res = await fetch(p);
-                                if (res.ok) { const t = await res.text(); title = parseFileText(t).title; path = p; break; }
-                            } catch (e) {}
-                        }
-                        return { fileName: name, year, month: mIdx, dayLabel: getOrdinal(day), displayTitle: title, fullPath: path };
-                    }));
-                    setFiles(details);
-                } catch (e) {}
+                    let title = name;
+                    let finalPath = possiblePaths[0];
+
+                    for (let p of possiblePaths) {
+                        try {
+                            const res = await fetch(p);
+                            if (res.ok) { 
+                                const t = await res.text(); 
+                                title = parseFileText(t).title; 
+                                finalPath = p; 
+                                break; 
+                            }
+                        } catch (e) {}
+                    }
+                    return { fileName: name, year, month: mIdx, dayLabel: getOrdinal(day), displayTitle: title, fullPath: finalPath };
+                }));
+                setFiles(details.filter(f => f.fullPath));
             };
 
             useEffect(() => { scanDataFolder(); }, []);
@@ -138,6 +159,7 @@
             const handleIncorrect = () => {
                 const current = sessionCards[0];
                 if (!mistakeTracker.find(c => c.id === current.id)) setMistakeTracker(prev => [...prev, current]);
+                
                 if (quizType === 'flash' && !isFlipped) {
                     setIsFlipped(true);
                     setShowNextButton(true);
@@ -153,7 +175,7 @@
                 }
             };
 
-            // Bulletproof Resizer: Listen to the Window, not the Divider
+            // Bulletproof Window-Based Resizer
             useEffect(() => {
                 const handleMouseMove = (e) => {
                     if (!isDragging) return;
@@ -212,6 +234,7 @@
                     </div>
 
                     <div className="flex-1 flex flex-col min-w-0">
+                        {/* HEADER */}
                         <header className="h-16 bg-white border-b flex items-center justify-between px-10 z-10 shadow-sm">
                             <h2 className="font-black text-slate-900 truncate text-sm tracking-tight uppercase">{fileContent.title || "Kotoba Master"}</h2>
                             <div className="flex items-center gap-4">
@@ -230,15 +253,16 @@
                             </div>
                         </header>
 
-                        <div className="flex-1 flex overflow-hidden">
-                            <div style={{ width: viewMode === 'split' ? `${splitPercent}%` : (viewMode === 'quiz' ? (isSwapped ? '0%' : '100%') : (isSwapped ? '100%' : '0%')) }} className="h-full overflow-hidden flex flex-col">
-                                {isSwapped ? <WebPanel url={fileContent.url} /> : <QuizPanel quizScale={quizScale} setQuizScale={setQuizScale} activeFile={activeFile} isFinished={isFinished} mistakeTracker={mistakeTracker} startQuiz={startQuiz} quizType={quizType} fileContent={fileContent} sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished} />}
+                        {/* WORKSPACE */}
+                        <div className={`flex-1 flex overflow-hidden ${isSwapped ? 'flex-row-reverse' : ''}`}>
+                            <div style={{ width: viewMode === 'split' ? `${splitPercent}%` : (viewMode === 'quiz' ? '100%' : '0%') }} className="h-full overflow-hidden flex flex-col">
+                                <QuizPanel quizScale={quizScale} setQuizScale={setQuizScale} activeFile={activeFile} isFinished={isFinished} mistakeTracker={mistakeTracker} startQuiz={startQuiz} quizType={quizType} fileContent={fileContent} sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished} />
                             </div>
 
                             {viewMode === 'split' && <div className={`resizer ${isDragging ? 'dragging' : ''}`} onMouseDown={() => setIsDragging(true)}></div>}
 
-                            <div style={{ width: viewMode === 'split' ? `${100 - splitPercent}%` : (viewMode === 'quiz' ? (isSwapped ? '100%' : '0%') : (isSwapped ? '0%' : '100%')) }} className="h-full overflow-hidden flex flex-col">
-                                {isSwapped ? <QuizPanel quizScale={quizScale} setQuizScale={setQuizScale} activeFile={activeFile} isFinished={isFinished} mistakeTracker={mistakeTracker} startQuiz={startQuiz} quizType={quizType} fileContent={fileContent} sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished} /> : <WebPanel url={fileContent.url} />}
+                            <div style={{ width: viewMode === 'split' ? `${100 - splitPercent}%` : (viewMode === 'web' ? '100%' : '0%') }} className="h-full overflow-hidden flex flex-col">
+                                <WebPanel url={fileContent.url} />
                             </div>
                         </div>
                     </div>
@@ -256,6 +280,7 @@
 
             return (
                 <div className="h-full bg-slate-50 flex flex-col items-center justify-center p-12 relative overflow-y-auto w-full">
+                    {/* Scale Controls */}
                     <div className="absolute top-6 right-10 flex gap-2 z-50">
                         <button onClick={() => setQuizScale(Math.max(quizScale - 0.1, 0.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50 transition-colors">-</button>
                         <button onClick={() => setQuizScale(Math.min(quizScale + 0.1, 1.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50 transition-colors">+</button>
@@ -292,7 +317,7 @@
                                     <div className={`w-full h-full card-inner relative ${isFlipped || mcqSelected ? 'flipped' : ''}`}>
                                         <div className="absolute w-full h-full bg-white rounded-[4rem] shadow-2xl border border-slate-100 flex flex-col items-center justify-center p-20 backface-hidden">
                                             <h1 className="text-7xl font-black text-slate-900 mb-12 select-text text-center leading-none" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h1>
-                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none">Reveal</div>
+                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none">Reveal Answer</div>
                                         </div>
                                         <div className="absolute w-full h-full bg-indigo-600 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white">
                                             <h3 className="text-5xl font-black mb-6 select-text leading-none" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h3>
@@ -335,7 +360,7 @@
 
         const WebPanel = ({ url }) => (
             <div className="h-full bg-white flex flex-col w-full">
-                {url ? <iframe src={url} className="w-full h-full border-none"></iframe> : <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest">No Link</div>}
+                {url ? <iframe src={url} className="w-full h-full border-none"></iframe> : <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest">No Link Provided</div>}
             </div>
         );
 
