@@ -33,9 +33,9 @@
         /**
          * --- CONFIGURE YOUR REPO HERE ---
          */
-        const REPO_OWNER = "elronimous"; // Change this!
-        const REPO_NAME = "Kotoba-Master";       // Change this!
-        const DATA_FOLDER_PATH = "DATA"; 
+        const REPO_OWNER = "elronimous"; 
+        const REPO_NAME = "Kotoba-Master";       
+        const DATA_FOLDER_PATH = "data"; // Updated to strictly lowercase!
 
         const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
@@ -97,11 +97,15 @@
                 
                 try {
                     const response = await fetch(apiUrl);
-                    if (!response.ok) throw new Error("Could not reach GitHub API");
+                    if (!response.ok) throw new Error("API Request Failed. Check folder name.");
                     
-                    const remoteFiles = await response.ok ? await response.json() : [];
+                    const remoteFiles = await response.json();
                     
                     const txtFiles = remoteFiles.filter(f => f.name.endsWith('.txt'));
+                    
+                    if (txtFiles.length === 0) {
+                        addLog("API connected, but no .txt files found in 'data'.");
+                    }
                     
                     const details = await Promise.all(txtFiles.map(async (f) => {
                         const name = f.name;
@@ -112,9 +116,9 @@
                         const mIdx = parseInt(monthPart) - 1;
                         const day = parseInt(dayPart);
                         
-                        // We fetch the content to get the real Title from Line 2
                         let title = name;
                         try {
+                            // Fetch the file to read its contents (for the title)
                             const contentRes = await fetch(f.download_url);
                             const text = await contentRes.text();
                             title = parseFileText(text).title;
@@ -123,14 +127,14 @@
                         return { 
                             fileName: name, year, month: mIdx, 
                             dayLabel: getOrdinal(day), displayTitle: title, 
-                            fullPath: f.download_url // Uses the raw download URL
+                            fullPath: f.download_url 
                         };
                     }));
                     
                     setFiles(details.sort((a, b) => b.fileName.localeCompare(a.fileName)));
                     addLog(`Successfully loaded ${details.length} files.`);
                 } catch (e) {
-                    addLog(`API Error: ${e.message}`);
+                    addLog(`Error: ${e.message}`);
                 }
             };
 
@@ -288,7 +292,7 @@
                     </div>
                     <div className="quiz-scale-container w-full flex flex-col items-center justify-center" style={{ transform: `scale(${quizScale})` }}>
                         {!activeFile ? (
-                            <div className="text-slate-300 font-black uppercase tracking-[0.3em] text-[10px] font-bold">Select session</div>
+                            <div className="text-slate-300 font-black uppercase tracking-[0.3em] text-[10px] font-bold">Waiting for input</div>
                         ) : isFinished ? (
                             <div className="max-w-2xl w-full text-center p-16 bg-white rounded-[4rem] shadow-2xl border border-slate-100 font-bold">
                                 <div className="text-8xl mb-8 font-normal">{mistakeTracker.length === 0 ? "🏆" : "🔥"}</div>
@@ -315,25 +319,25 @@
                             <div className="w-full max-w-4xl flex flex-col items-center">
                                 <div className="aspect-[16/8] w-full perspective-2000 mb-12 cursor-pointer" onClick={() => { if (quizType === 'flash' && !showNextButton) setIsFlipped(!isFlipped); if (mcqSelected) handleCorrect(); if (showNextButton) handleIncorrect(); }}>
                                     <div className={`w-full h-full card-inner relative ${isFlipped || mcqSelected ? 'flipped' : ''}`}>
-                                        <div className="absolute w-full h-full bg-white rounded-[4rem] shadow-2xl border border-slate-100 flex flex-col items-center justify-center p-20 backface-hidden font-bold">
+                                        <div className="absolute w-full h-full bg-white rounded-[4rem] shadow-2xl border border-slate-100 flex flex-col items-center justify-center p-20 backface-hidden">
                                             <h1 className="text-7xl font-black text-slate-900 mb-12 select-text text-center leading-none font-bold" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h1>
-                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none font-bold font-bold">FLIP</div>
+                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none font-bold">Reveal Answer</div>
                                         </div>
-                                        <div className="absolute w-full h-full bg-indigo-600 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white font-bold font-bold">
+                                        <div className="absolute w-full h-full bg-indigo-600 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white font-bold">
                                             <h3 className="text-5xl font-black mb-6 select-text leading-none font-bold">{sessionCards[0].word}</h3>
-                                            <p className="text-indigo-200 text-3xl font-black mb-12 select-text leading-none font-bold font-bold">【 {sessionCards[0].reading} 】</p>
-                                            <p className="text-2xl leading-relaxed whitespace-pre-wrap font-bold text-center select-text font-bold font-bold">{sessionCards[0].meaning}</p>
+                                            <p className="text-indigo-200 text-3xl font-black mb-12 select-text leading-none font-bold">【 {sessionCards[0].reading} 】</p>
+                                            <p className="text-2xl leading-relaxed whitespace-pre-wrap font-bold text-center select-text font-bold">{sessionCards[0].meaning}</p>
                                         </div>
                                     </div>
                                 </div>
                                 <div className="w-full">
                                     {quizType === 'flash' ? (
                                         showNextButton ? (
-                                            <button onClick={handleIncorrect} className="w-full py-10 bg-indigo-600 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95 font-bold font-bold">Next</button>
+                                            <button onClick={handleIncorrect} className="w-full py-10 bg-indigo-600 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95 font-bold">Next</button>
                                         ) : (
                                             <div className="grid grid-cols-2 gap-10 font-bold">
-                                                <button onClick={handleIncorrect} className="py-10 bg-white border-2 border-red-50 rounded-[2.5rem] text-red-500 font-black text-xl hover:bg-red-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold font-bold">Wrong</button>
-                                                <button onClick={handleCorrect} className="py-10 bg-white border-2 border-green-50 rounded-[2.5rem] text-green-500 font-black text-xl hover:bg-green-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold font-bold">Right</button>
+                                                <button onClick={handleIncorrect} className="py-10 bg-white border-2 border-red-50 rounded-[2.5rem] text-red-500 font-black text-xl hover:bg-red-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold">Wrong</button>
+                                                <button onClick={handleCorrect} className="py-10 bg-white border-2 border-green-50 rounded-[2.5rem] text-green-500 font-black text-xl hover:bg-green-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold">Right</button>
                                             </div>
                                         )
                                     ) : (
@@ -360,7 +364,7 @@
 
         const WebPanel = ({ url }) => (
             <div className="h-full bg-white flex flex-col w-full">
-                {url ? <iframe src={url} className="w-full h-full border-none"></iframe> : <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest font-bold font-bold font-bold font-bold">Link Missing</div>}
+                {url ? <iframe src={url} className="w-full h-full border-none"></iframe> : <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest font-bold">No Link Provided</div>}
             </div>
         );
 
