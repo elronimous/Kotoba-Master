@@ -31,8 +31,8 @@
 
         /**
          * --- GITHUB MANIFEST ---
-         * Add your filenames here exactly as they appear in your DATA folder.
-         * Example: "20260515_1602.txt"
+         * 1. Filenames must match EXACTLY (Case-Sensitive).
+         * 2. Do not include folder paths here, just the .txt name.
          */
         const FILE_LIST = [
             "20260515_1602.txt",
@@ -67,7 +67,6 @@
             const [isDragging, setIsDragging] = useState(false);
             const [showNextButton, setShowNextButton] = useState(false);
 
-            // --- Robust Parser ---
             const parseFileText = (text) => {
                 const lines = text.split(/\r?\n/).map(l => l.trim());
                 const url = lines[0] || '';
@@ -81,12 +80,7 @@
                     const headMatch = line.match(/^([^\[]+)(?:\[([^\]]+)\])?/);
                     if (headMatch && !line.startsWith('(')) {
                         if (currentItem) vocab.push(currentItem);
-                        currentItem = { 
-                            id: vocab.length, 
-                            word: headMatch[1].trim(), 
-                            reading: (headMatch[2] || headMatch[1]).trim(), 
-                            meaning: "" 
-                        };
+                        currentItem = { id: vocab.length, word: headMatch[1].trim(), reading: (headMatch[2] || headMatch[1]).trim(), meaning: "" };
                     } else if (currentItem) {
                         const formattedLine = line.replace(/(\(\d+\))/g, '\n$1').trim();
                         currentItem.meaning += (currentItem.meaning ? '\n' : '') + formattedLine;
@@ -96,48 +90,59 @@
                 return { url, title, vocab };
             };
 
-            // --- GitHub-Ready Scanner ---
             const scanDataFolder = async () => {
+                console.log("Starting GitHub file scan...");
                 const details = await Promise.all(FILE_LIST.map(async (name) => {
                     const year = name.substring(0, 4);
                     const mIdx = parseInt(name.substring(4, 6)) - 1;
                     const day = parseInt(name.substring(6, 8));
                     
                     const possiblePaths = [
-                        `./DATA/${year}/${MONTHS[mIdx]}/${name}`,
-                        `./DATA/${name}`
+                        `DATA/${year}/${MONTHS[mIdx]}/${name}`,
+                        `DATA/${name}`
                     ];
 
                     let title = name;
-                    let finalPath = possiblePaths[0];
+                    let finalPath = "";
 
                     for (let p of possiblePaths) {
                         try {
-                            const res = await fetch(p);
+                            const res = await fetch(p + "?t=" + Date.now()); // Cache buster
                             if (res.ok) { 
                                 const t = await res.text(); 
-                                title = parseFileText(t).title; 
+                                const parsed = parseFileText(t);
+                                title = parsed.title; 
                                 finalPath = p; 
+                                console.log(`Successfully found: ${p}`);
                                 break; 
                             }
-                        } catch (e) {}
+                        } catch (e) {
+                            console.warn(`Failed to fetch at path: ${p}`);
+                        }
                     }
                     return { fileName: name, year, month: mIdx, dayLabel: getOrdinal(day), displayTitle: title, fullPath: finalPath };
                 }));
-                setFiles(details.filter(f => f.fullPath));
+                const filtered = details.filter(f => f.fullPath);
+                console.log("Files loaded into sidebar:", filtered);
+                setFiles(filtered);
             };
 
             useEffect(() => { scanDataFolder(); }, []);
 
             const loadFile = async (f) => {
+                console.log(`Loading session: ${f.fullPath}`);
                 try {
-                    const res = await fetch(f.fullPath);
-                    const parsed = parseFileText(await res.text());
+                    const res = await fetch(f.fullPath + "?t=" + Date.now());
+                    const text = await res.text();
+                    const parsed = parseFileText(text);
+                    console.log(`Parsed ${parsed.vocab.length} words.`);
                     setFileContent(parsed);
                     setActiveFile(f.fileName);
                     setQuizType(null);
                     setIsFinished(false);
-                } catch (e) {}
+                } catch (e) {
+                    console.error("Error loading file contents:", e);
+                }
             };
 
             const startQuiz = (type, cards = fileContent.vocab) => {
@@ -159,7 +164,6 @@
             const handleIncorrect = () => {
                 const current = sessionCards[0];
                 if (!mistakeTracker.find(c => c.id === current.id)) setMistakeTracker(prev => [...prev, current]);
-                
                 if (quizType === 'flash' && !isFlipped) {
                     setIsFlipped(true);
                     setShowNextButton(true);
@@ -175,7 +179,6 @@
                 }
             };
 
-            // Bulletproof Window-Based Resizer
             useEffect(() => {
                 const handleMouseMove = (e) => {
                     if (!isDragging) return;
@@ -185,18 +188,15 @@
                     let percent = (relativeX / workspaceWidth) * 100;
                     setSplitPercent(Math.min(Math.max(percent, 10), 90));
                 };
-
                 const handleMouseUp = () => {
                     setIsDragging(false);
                     document.body.style.cursor = 'default';
                 };
-
                 if (isDragging) {
                     window.addEventListener('mousemove', handleMouseMove);
                     window.addEventListener('mouseup', handleMouseUp);
                     document.body.style.cursor = 'col-resize';
                 }
-
                 return () => {
                     window.removeEventListener('mousemove', handleMouseMove);
                     window.removeEventListener('mouseup', handleMouseUp);
@@ -205,12 +205,11 @@
 
             return (
                 <div className="flex h-screen w-screen overflow-hidden select-none bg-slate-100">
-                    {/* SIDEBAR */}
                     <div className="w-80 bg-slate-900 text-slate-400 flex flex-col flex-shrink-0 z-50 shadow-2xl">
                         <div className="p-6 border-b border-slate-800 flex items-center justify-between text-white">
-                            <button onClick={() => setCurrentYear(y => y-1)} className="p-2 hover:bg-slate-800 rounded-lg">{"<"}</button>
+                            <button onClick={() => setCurrentYear(y => y-1)} className="p-2 hover:bg-slate-800 rounded-lg transition-colors">{"<"}</button>
                             <span className="font-black text-2xl tracking-tighter">{currentYear}</span>
-                            <button onClick={() => setCurrentYear(y => y+1)} className="p-2 hover:bg-slate-800 rounded-lg">{">"}</button>
+                            <button onClick={() => setCurrentYear(y => y+1)} className="p-2 hover:bg-slate-800 rounded-lg transition-colors">{">"}</button>
                         </div>
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {MONTHS.map((m, idx) => {
@@ -234,7 +233,6 @@
                     </div>
 
                     <div className="flex-1 flex flex-col min-w-0">
-                        {/* HEADER */}
                         <header className="h-16 bg-white border-b flex items-center justify-between px-10 z-10 shadow-sm">
                             <h2 className="font-black text-slate-900 truncate text-sm tracking-tight uppercase">{fileContent.title || "Kotoba Master"}</h2>
                             <div className="flex items-center gap-4">
@@ -253,7 +251,6 @@
                             </div>
                         </header>
 
-                        {/* WORKSPACE */}
                         <div className={`flex-1 flex overflow-hidden ${isSwapped ? 'flex-row-reverse' : ''}`}>
                             <div style={{ width: viewMode === 'split' ? `${splitPercent}%` : (viewMode === 'quiz' ? '100%' : '0%') }} className="h-full overflow-hidden flex flex-col">
                                 <QuizPanel quizScale={quizScale} setQuizScale={setQuizScale} activeFile={activeFile} isFinished={isFinished} mistakeTracker={mistakeTracker} startQuiz={startQuiz} quizType={quizType} fileContent={fileContent} sessionCards={sessionCards} isFlipped={isFlipped} setIsFlipped={setIsFlipped} mcqSelected={mcqSelected} setMcqSelected={setMcqSelected} handleCorrect={handleCorrect} handleIncorrect={handleIncorrect} showNextButton={showNextButton} setQuizType={setQuizType} setIsFinished={setIsFinished} />
@@ -280,7 +277,6 @@
 
             return (
                 <div className="h-full bg-slate-50 flex flex-col items-center justify-center p-12 relative overflow-y-auto w-full">
-                    {/* Scale Controls */}
                     <div className="absolute top-6 right-10 flex gap-2 z-50">
                         <button onClick={() => setQuizScale(Math.max(quizScale - 0.1, 0.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50 transition-colors">-</button>
                         <button onClick={() => setQuizScale(Math.min(quizScale + 0.1, 1.5))} className="w-10 h-10 flex items-center justify-center bg-white border border-slate-200 rounded-lg shadow-sm font-black text-xl hover:bg-slate-50 transition-colors">+</button>
@@ -291,7 +287,7 @@
                             <div className="text-slate-300 font-black uppercase tracking-[0.3em] text-[10px]">Select session</div>
                         ) : isFinished ? (
                             <div className="max-w-2xl w-full text-center p-16 bg-white rounded-[4rem] shadow-2xl border border-slate-100">
-                                <div className="text-8xl mb-8">{mistakeTracker.length === 0 ? "🏆" : "🔥"}</div>
+                                <div className="text-8xl mb-8 font-normal">{mistakeTracker.length === 0 ? "🏆" : "🔥"}</div>
                                 <h2 className="text-6xl font-black mb-4 text-slate-900 uppercase tracking-tighter leading-none">DONE</h2>
                                 <div className="space-y-6">
                                     {mistakeTracker.length > 0 && <button onClick={() => startQuiz(quizType, mistakeTracker)} className="w-full py-10 bg-indigo-600 text-white rounded-3xl font-black shadow-xl uppercase text-lg tracking-widest">Retry Mistakes ({mistakeTracker.length})</button>}
