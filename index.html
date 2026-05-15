@@ -30,12 +30,9 @@
     <script type="text/babel">
         const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
-        /**
-         * --- CONFIGURE YOUR REPO HERE ---
-         */
         const REPO_OWNER = "elronimous"; 
         const REPO_NAME = "Kotoba-Master";       
-        const DATA_FOLDER_PATH = "data"; // Updated to strictly lowercase!
+        const DATA_FOLDER_PATH = "data"; 
 
         const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
@@ -90,7 +87,6 @@
                 return { url, title, vocab };
             };
 
-            // --- Dynamic GitHub API Scanner ---
             const scanDataFolder = async () => {
                 addLog("Connecting to GitHub API...");
                 const apiUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${DATA_FOLDER_PATH}`;
@@ -100,7 +96,6 @@
                     if (!response.ok) throw new Error("API Request Failed. Check folder name.");
                     
                     const remoteFiles = await response.json();
-                    
                     const txtFiles = remoteFiles.filter(f => f.name.endsWith('.txt'));
                     
                     if (txtFiles.length === 0) {
@@ -118,7 +113,6 @@
                         
                         let title = name;
                         try {
-                            // Fetch the file to read its contents (for the title)
                             const contentRes = await fetch(f.download_url);
                             const text = await contentRes.text();
                             title = parseFileText(text).title;
@@ -208,7 +202,6 @@
 
             return (
                 <div className="flex h-screen w-screen overflow-hidden select-none bg-slate-100 font-bold">
-                    {/* SYSTEM DEBUGGER */}
                     {files.length === 0 && (
                         <div className="fixed bottom-6 right-6 bg-slate-900 text-indigo-300 p-6 rounded-2xl text-[10px] font-mono z-[100] shadow-2xl max-w-xs border border-indigo-500/30">
                             <div className="text-white font-bold mb-2 border-b border-slate-800 pb-2 uppercase tracking-widest">GitHub API Logs</div>
@@ -284,6 +277,21 @@
                 return [correct, ...others].sort(() => Math.random() - 0.5);
             }, [sessionCards, quizType, fileContent.vocab]);
 
+            // Smart Text Formatter: Shrinks and grays out brackets unless they are strictly numbers
+            const formatMeaningText = (text) => {
+                if (!text) return null;
+                const parts = text.split(/(\([^)]+\)|\[[^\]]+\])/g);
+                return parts.map((part, i) => {
+                    if (/^[\(\[]\d+[\)\]]$/.test(part)) {
+                        return part; // Pure digits like (1) or [2] stay normal
+                    }
+                    if (/^[\(\[].*[\)\]]$/.test(part)) {
+                        return <span key={i} className="text-slate-400 text-[0.85em] font-medium">{part}</span>; // Other brackets get grayed
+                    }
+                    return part;
+                });
+            };
+
             return (
                 <div className="h-full bg-slate-50 flex flex-col items-center justify-center p-12 relative overflow-y-auto w-full">
                     <div className="absolute top-6 right-10 flex gap-2 z-50">
@@ -319,25 +327,27 @@
                             <div className="w-full max-w-4xl flex flex-col items-center">
                                 <div className="aspect-[16/8] w-full perspective-2000 mb-12 cursor-pointer" onClick={() => { if (quizType === 'flash' && !showNextButton) setIsFlipped(!isFlipped); if (mcqSelected) handleCorrect(); if (showNextButton) handleIncorrect(); }}>
                                     <div className={`w-full h-full card-inner relative ${isFlipped || mcqSelected ? 'flipped' : ''}`}>
-                                        <div className="absolute w-full h-full bg-white rounded-[4rem] shadow-2xl border border-slate-100 flex flex-col items-center justify-center p-20 backface-hidden">
+                                        <div className="absolute w-full h-full bg-white rounded-[4rem] shadow-2xl border border-slate-100 flex flex-col items-center justify-center p-20 backface-hidden font-bold">
                                             <h1 className="text-7xl font-black text-slate-900 mb-12 select-text text-center leading-none font-bold" onClick={e=>e.stopPropagation()}>{sessionCards[0].word}</h1>
-                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none font-bold">Reveal Answer</div>
+                                            <div className="px-12 py-5 bg-slate-50 text-slate-400 rounded-full text-sm font-black tracking-widest uppercase leading-none font-bold font-bold">FLIP</div>
                                         </div>
-                                        <div className="absolute w-full h-full bg-indigo-600 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white font-bold">
+                                        <div className="absolute w-full h-full bg-indigo-600 rounded-[4rem] shadow-2xl flex flex-col items-center justify-center p-20 backface-hidden rotate-y-180 text-white font-bold font-bold">
                                             <h3 className="text-5xl font-black mb-6 select-text leading-none font-bold">{sessionCards[0].word}</h3>
-                                            <p className="text-indigo-200 text-3xl font-black mb-12 select-text leading-none font-bold">【 {sessionCards[0].reading} 】</p>
-                                            <p className="text-2xl leading-relaxed whitespace-pre-wrap font-bold text-center select-text font-bold">{sessionCards[0].meaning}</p>
+                                            <p className="text-indigo-200 text-3xl font-black mb-12 select-text leading-none font-bold font-bold">【 {sessionCards[0].reading} 】</p>
+                                            <p className="text-2xl leading-relaxed whitespace-pre-wrap font-bold text-center select-text font-bold font-bold">
+                                                {formatMeaningText(sessionCards[0].meaning)}
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
                                 <div className="w-full">
                                     {quizType === 'flash' ? (
                                         showNextButton ? (
-                                            <button onClick={handleIncorrect} className="w-full py-10 bg-indigo-600 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95 font-bold">Next</button>
+                                            <button onClick={handleIncorrect} className="w-full py-10 bg-indigo-600 text-white rounded-[2.5rem] font-black text-xl shadow-xl transition-all uppercase tracking-widest leading-none active:scale-95 font-bold font-bold">Next</button>
                                         ) : (
                                             <div className="grid grid-cols-2 gap-10 font-bold">
-                                                <button onClick={handleIncorrect} className="py-10 bg-white border-2 border-red-50 rounded-[2.5rem] text-red-500 font-black text-xl hover:bg-red-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold">Wrong</button>
-                                                <button onClick={handleCorrect} className="py-10 bg-white border-2 border-green-50 rounded-[2.5rem] text-green-500 font-black text-xl hover:bg-green-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold">Right</button>
+                                                <button onClick={handleIncorrect} className="py-10 bg-white border-2 border-red-50 rounded-[2.5rem] text-red-500 font-black text-xl hover:bg-red-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold font-bold">Wrong</button>
+                                                <button onClick={handleCorrect} className="py-10 bg-white border-2 border-green-50 rounded-[2.5rem] text-green-500 font-black text-xl hover:bg-green-50 shadow-xl transition-all uppercase tracking-widest leading-none font-bold font-bold">Right</button>
                                             </div>
                                         )
                                     ) : (
@@ -350,7 +360,11 @@
                                                     else if (isSelected) style = "bg-red-500 border-red-500 text-white shadow-2xl font-bold";
                                                     else style = "bg-white border-slate-100 text-slate-300 opacity-40 font-bold";
                                                 }
-                                                return <button key={opt.id} disabled={!!mcqSelected} onClick={() => { if (isCorrect) handleCorrect(); else { handleIncorrect(); setMcqSelected(opt); } }} className={`py-8 px-12 rounded-[2.5rem] border-4 text-2xl font-black transition-all text-left uppercase tracking-tight leading-tight font-bold ${style}`}>{opt.meaning.split('\n')[0].substring(0, 140)}</button>;
+                                                return (
+                                                    <button key={opt.id} disabled={!!mcqSelected} onClick={() => { if (isCorrect) handleCorrect(); else { handleIncorrect(); setMcqSelected(opt); } }} className={`py-8 px-12 rounded-[2.5rem] border-4 text-2xl font-black transition-all text-left tracking-tight leading-tight font-bold ${style}`}>
+                                                        {formatMeaningText(opt.meaning.split('\n')[0].substring(0, 140))}
+                                                    </button>
+                                                );
                                             })}
                                         </div>
                                     )}
@@ -362,11 +376,41 @@
             );
         };
 
-        const WebPanel = ({ url }) => (
-            <div className="h-full bg-white flex flex-col w-full">
-                {url ? <iframe src={url} className="w-full h-full border-none"></iframe> : <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest font-bold">No Link Provided</div>}
-            </div>
-        );
+        const WebPanel = ({ url }) => {
+            const getHostname = (link) => {
+                try { return new URL(link).hostname; } catch(e) { return link; }
+            };
+
+            return (
+                <div className="h-full bg-white flex flex-col w-full relative">
+                    {url ? (
+                        <>
+                            <div className="h-16 bg-slate-50 border-b border-slate-200 flex items-center justify-between px-8 shrink-0 z-10 shadow-sm">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse"></div>
+                                    <span className="text-[11px] font-black uppercase tracking-widest text-slate-500 truncate font-bold">
+                                        Source: {getHostname(url)}
+                                    </span>
+                                </div>
+                                <a 
+                                    href={url} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95 flex items-center gap-2 font-bold"
+                                >
+                                    Open in New Tab
+                                </a>
+                            </div>
+                            <div className="flex-1 relative bg-slate-100">
+                                <iframe src={url} className="absolute inset-0 w-full h-full border-none"></iframe>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="h-full flex items-center justify-center text-slate-300 font-black uppercase text-xs tracking-widest font-bold">No Link Provided</div>
+                    )}
+                </div>
+            );
+        };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
